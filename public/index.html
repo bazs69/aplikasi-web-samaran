@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShadowSearch Pro — Mesin Pencari & Web Samaran Privasi</title>
+  <meta name="description" content="Aplikasi mesin pencari samaran dengan server-side proxy terenkripsi untuk melindungi riwayat pencarian dari pemantauan WiFi.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="logo-group">
+      <div class="logo-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="M12 8v4"/>
+          <path d="M12 16h.01"/>
+        </svg>
+      </div>
+      <div class="logo-text">
+        <span class="brand-title">ShadowSearch</span>
+        <span class="brand-badge">STEALTH MODE</span>
+      </div>
+    </div>
+
+    <!-- Live WiFi Protection Status -->
+    <div class="wifi-status-pill tooltip-trigger">
+      <span class="pulse-dot"></span>
+      <span class="status-text">WiFi Obfuscation: <strong>AKTIF</strong></span>
+      <div class="tooltip-box">
+        <h4>🛡️ Bagaimana Kamu Dilindungi Dari Pemilik WiFi?</h4>
+        <p>Semua permintaan pencarian & halaman web diproses oleh <strong>Server Proxy Terenkripsi (HTTPS)</strong>. Router WiFi pemilik tempat Anda berada hanya melihat koneksi ke server ini, <em>bukan kata kunci atau situs yang Anda buka!</em></p>
+      </div>
+    </div>
+
+    <!-- Action Tools -->
+    <div class="nav-actions">
+      <button id="btn-history" class="btn-icon" title="Riwayat Tersandi">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>Riwayat</span>
+      </button>
+
+      <button id="btn-vault" class="btn-icon" title="Kunci Brankas (PIN)">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span id="vault-status-label">PIN Vault</span>
+      </button>
+
+      <button id="btn-panic" class="btn-panic" title="Mode Penyamaran Darurat (Tombol ESC)">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span>DARURAT [ESC]</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="container">
+    
+    <!-- Hero Header -->
+    <section class="hero-section">
+      <h1 class="hero-title">Cari Apapun Tanpa Jejak WiFi</h1>
+      <p class="hero-subtitle">Metasearch engine terenkripsi dengan server-side stealth reader & brankas lokal tersandi.</p>
+
+      <!-- Search Box Container -->
+      <div class="search-box-wrapper">
+        <div class="search-bar">
+          <div class="search-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          
+          <input 
+            type="text" 
+            id="search-input" 
+            placeholder="Ketik pencarian atau URL web..." 
+            autocomplete="off"
+            spellcheck="false"
+          />
+
+          <button id="btn-clear" class="btn-clear hidden" title="Hapus teks">✕</button>
+
+          <button id="btn-search" class="btn-search">
+            <span>Cari</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </button>
+        </div>
+
+        <!-- Live Auto-Suggestions Dropdown -->
+        <div id="suggestions-box" class="suggestions-dropdown hidden"></div>
+      </div>
+
+      <!-- Engine Selector & Stealth Toggles -->
+      <div class="controls-bar">
+        <div class="engine-selector">
+          <span class="control-label">Mesin:</span>
+          <button class="engine-chip active" data-engine="all">⚡ Metasearch (Semua)</button>
+          <button class="engine-chip" data-engine="duckduckgo">🦆 DuckDuckGo</button>
+          <button class="engine-chip" data-engine="wikipedia">📚 Wikipedia ID</button>
+        </div>
+
+        <div class="stealth-toggle-wrapper">
+          <label class="switch-label">
+            <input type="checkbox" id="toggle-proxy-mode" checked>
+            <span class="slider round"></span>
+            <span class="switch-text">Paksa Pembaca Stealth Proxy 🛡️</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Category Chips -->
+    <section id="quick-links" class="quick-links-section">
+      <div class="quick-chip" data-query="Teknologi Kecerdasan Buatan AI terbaru">🤖 Teknologi AI</div>
+      <div class="quick-chip" data-query="Berita Utama Indonesia hari ini">📰 Berita Terkini</div>
+      <div class="quick-chip" data-query="Ensiklopedia Alam dan Sains">🌌 Sains & Alam</div>
+      <div class="quick-chip" data-query="Tips Privasi Keamanan Siber">🔒 Cyber Security</div>
+    </section>
+
+    <!-- Search Results Section -->
+    <section id="results-section" class="results-section hidden">
+      <div class="results-header">
+        <div class="results-meta">
+          <span id="results-count">Menampilkan 0 hasil</span>
+          <span id="results-query-tag" class="query-badge">""</span>
+        </div>
+        <div class="wifi-shield-badge">
+          <span>🔒 Terlindungi Server Proxy</span>
+        </div>
+      </div>
+
+      <div id="loading-spinner" class="loading-state hidden">
+        <div class="spinner"></div>
+        <p>Mengambil hasil via Server Proxy Terenkripsi...</p>
+      </div>
+
+      <div id="results-container" class="results-grid"></div>
+    </section>
+
+  </main>
+
+  <!-- Vault PIN Modal -->
+  <div id="vault-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🔒 Brankas Riwayat Tersandi</h3>
+        <button class="btn-close-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Masukkan 4-digit PIN keamanan Anda untuk mengakses atau menyimpan riwayat lokal.</p>
+        
+        <div class="pin-display">
+          <input type="password" id="pin-input" maxlength="4" placeholder="••••" readonly />
+        </div>
+
+        <div class="pin-keypad">
+          <button class="pin-btn">1</button><button class="pin-btn">2</button><button class="pin-btn">3</button>
+          <button class="pin-btn">4</button><button class="pin-btn">5</button><button class="pin-btn">6</button>
+          <button class="pin-btn">7</button><button class="pin-btn">8</button><button class="pin-btn">9</button>
+          <button class="pin-btn pin-clear">C</button><button class="pin-btn">0</button><button class="pin-btn pin-enter">↵</button>
+        </div>
+
+        <p id="pin-error-msg" class="error-msg hidden">PIN Salah! Silakan coba lagi.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- History Drawer / Modal -->
+  <div id="history-modal" class="modal-overlay hidden">
+    <div class="modal-card large">
+      <div class="modal-header">
+        <h3>📜 Riwayat Pencarian Lokal (Tersandi)</h3>
+        <div class="modal-actions">
+          <button id="btn-clear-history" class="btn-danger-sm">🗑️ Hapus Semua</button>
+          <button class="btn-close-modal">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Riwayat ini disimpan secara lokal di browser Anda dengan enkripsi PIN dan tidak pernah dikirim ke server manapun.</p>
+        <div id="history-list" class="history-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PANIC DISGUISE OVERLAY (Press ESC to toggle) -->
+  <div id="panic-overlay" class="panic-overlay hidden">
+    <!-- Fake Google Docs Header & Editor UI -->
+    <div class="fake-docs-bar">
+      <div class="docs-icon">📄</div>
+      <div class="docs-title">
+        <span class="doc-name">Dokumen Tugas Akhir - Ringkasan Riset Komputer.docx</span>
+        <div class="docs-menu">File &nbsp; Edit &nbsp; Tampilan &nbsp; Sisipkan &nbsp; Format &nbsp; Alat &nbsp; Bantuan</div>
+      </div>
+      <button id="btn-exit-panic" class="btn-exit-panic" title="Keluar dari Penyamaran">Kembali ke App (ESC)</button>
+    </div>
+    <div class="fake-docs-body">
+      <div class="doc-page">
+        <h2>Bab II: Landasan Teori Arsitektur Jaringan</h2>
+        <p>Penggunaan protokol komunikasi dalam jaringan komputer membutuhkan enkripsi tingkat tinggi untuk memastikan integritas data. Konsep dasar pemrosesan sinyal digital dan routing paket merupakan fondasi bagi keamanan informasi modern...</p>
+        <p style="color: #64748b; font-style: italic; margin-top: 20px;">[Dokumen ini disimulasikan sebagai penyamaran darurat tampilan.]</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-content">
+      <p>ShadowSearch Pro &bull; Privasi Maksimal Tanpa Log Router WiFi &bull; Server Proxy Active</p>
+      <p class="privacy-note">Tekan <kbd>ESC</kbd> kapan saja untuk seketika menyamarkan layar ke dokumen akademis.</p>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
