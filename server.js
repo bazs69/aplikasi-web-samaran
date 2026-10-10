@@ -12,11 +12,12 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Stealth User-Agent Spoofing
+// Stealth User-Agent Spoofing & No-SafeSearch Headers
 const DEFAULT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+  'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF; NRSLT=20'
 };
 
 // Helper: Decode Bing Base64 URLs
@@ -53,7 +54,7 @@ app.get('/api/suggest', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 2. METASEARCH API (Bing, Wikipedia)
+// 2. UNFILTERED METASEARCH API (SafeSearch OFF)
 // -------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
@@ -72,9 +73,9 @@ app.get('/api/search', async (req, res) => {
       results.push(...wikiResults);
     }
 
-    // Bing Web Search
+    // Uncensored Bing Web Search (SafeSearch Disabled)
     if (engine === 'duckduckgo' || engine === 'all' || engine === 'web') {
-      const webResults = await fetchBingWeb(query);
+      const webResults = await fetchBingUncensored(query);
       results.push(...webResults);
     }
 
@@ -123,16 +124,22 @@ async function fetchWikipedia(query, lang = 'id') {
   }
 }
 
-// Fetch Web Search via Bing Proxy Engine
-async function fetchBingWeb(query) {
+// Uncensored Bing Web Search (SafeSearch=OFF)
+async function fetchBingUncensored(query) {
   try {
-    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-    const res = await axios.get(searchUrl, { headers: DEFAULT_HEADERS, timeout: 6000 });
+    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&adlt=off&setmkt=en-US&setlang=en-US`;
+    const res = await axios.get(searchUrl, {
+      headers: {
+        ...DEFAULT_HEADERS,
+        'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF; NRSLT=20'
+      },
+      timeout: 7000
+    });
     const $ = cheerio.load(res.data);
     const results = [];
 
     $('.b_algo').each((i, el) => {
-      if (results.length >= 10) return;
+      if (results.length >= 12) return;
       const titleEl = $(el).find('h2 a');
       const title = titleEl.text().trim();
       const rawUrl = titleEl.attr('href');
@@ -157,14 +164,17 @@ async function fetchBingWeb(query) {
 }
 
 // -------------------------------------------------------------
-// 3. MEDIA STREAM PROXY (Support Video & Audio Streaming)
+// 3. MEDIA STREAM PROXY (Video/Audio)
 // -------------------------------------------------------------
 app.get('/api/media-proxy', async (req, res) => {
   const mediaUrl = req.query.url;
   if (!mediaUrl) return res.status(400).send('Media URL missing');
 
   try {
-    const reqHeaders = { ...DEFAULT_HEADERS };
+    const reqHeaders = {
+      ...DEFAULT_HEADERS,
+      'Referer': mediaUrl
+    };
     if (req.headers.range) {
       reqHeaders['Range'] = req.headers.range;
     }
@@ -174,7 +184,7 @@ app.get('/api/media-proxy', async (req, res) => {
       url: mediaUrl,
       headers: reqHeaders,
       responseType: 'stream',
-      timeout: 15000
+      timeout: 20000
     });
 
     if (response.headers['content-type']) {
@@ -199,7 +209,7 @@ app.get('/api/media-proxy', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 4. STEALTH PROXY WEB READER API
+// 4. UNLIMITED STEALTH PROXY WEB READER
 // -------------------------------------------------------------
 app.get('/api/proxy', async (req, res) => {
   const targetUrl = req.query.url;
@@ -209,15 +219,17 @@ app.get('/api/proxy', async (req, res) => {
 
   try {
     const response = await axios.get(targetUrl, {
-      headers: DEFAULT_HEADERS,
-      timeout: 10000,
+      headers: {
+        ...DEFAULT_HEADERS,
+        'Referer': targetUrl
+      },
+      timeout: 12000,
       maxRedirects: 5,
       responseType: 'text'
     });
 
     const contentType = response.headers['content-type'] || 'text/html';
     
-    // If video, audio, image, or raw binary, stream directly via media-proxy
     if (!contentType.includes('text/html')) {
       res.setHeader('Content-Type', contentType);
       return res.send(response.data);
@@ -225,12 +237,7 @@ app.get('/api/proxy', async (req, res) => {
 
     const $ = cheerio.load(response.data);
 
-    // Strip external trackers, ads, third-party analytics
-    $('script[src*="analytics"]').remove();
-    $('script[src*="google-analytics"]').remove();
-    $('script[src*="facebook"]').remove();
-
-    // Proxy HTML5 Video tags & source elements
+    // Proxy HTML5 Video/Audio elements
     $('video, audio, source').each((_, el) => {
       const src = $(el).attr('src');
       if (src) {
@@ -276,7 +283,7 @@ app.get('/api/proxy', async (req, res) => {
       ">
         <div style="display: flex; align-items: center; gap: 12px;">
           <span style="background: #10b981; color: #000; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;">
-            🛡️ PROXIED & SECURED (VIDEO SUPPORTED)
+            🛡️ PROXIED & SECURED (UNCENSORED)
           </span>
           <span style="font-weight: 600; color: #94a3b8; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 450px;">
             ${targetUrl}
@@ -315,7 +322,7 @@ app.get('/api/proxy', async (req, res) => {
 // Start Server
 app.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🔒 ShadowSearch Pro / Stealth Media Proxy Server Running!`);
+  console.log(`🔒 ShadowSearch Pro / Stealth Proxy Server Active!`);
   console.log(`🌐 Open in browser: http://localhost:${PORT}`);
   console.log(`====================================================`);
 });
