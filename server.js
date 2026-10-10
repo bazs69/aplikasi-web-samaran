@@ -53,7 +53,7 @@ app.get('/api/suggest', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 2. METASEARCH API (Bing, Wikipedia, DuckDuckGo)
+// 2. METASEARCH API (Bing, Wikipedia)
 // -------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
@@ -157,7 +157,49 @@ async function fetchBingWeb(query) {
 }
 
 // -------------------------------------------------------------
-// 3. STEALTH PROXY WEB READER API
+// 3. MEDIA STREAM PROXY (Support Video & Audio Streaming)
+// -------------------------------------------------------------
+app.get('/api/media-proxy', async (req, res) => {
+  const mediaUrl = req.query.url;
+  if (!mediaUrl) return res.status(400).send('Media URL missing');
+
+  try {
+    const reqHeaders = { ...DEFAULT_HEADERS };
+    if (req.headers.range) {
+      reqHeaders['Range'] = req.headers.range;
+    }
+
+    const response = await axios({
+      method: 'get',
+      url: mediaUrl,
+      headers: reqHeaders,
+      responseType: 'stream',
+      timeout: 15000
+    });
+
+    if (response.headers['content-type']) {
+      res.setHeader('Content-Type', response.headers['content-type']);
+    }
+    if (response.headers['content-length']) {
+      res.setHeader('Content-Length', response.headers['content-length']);
+    }
+    if (response.headers['accept-ranges']) {
+      res.setHeader('Accept-Ranges', response.headers['accept-ranges']);
+    }
+    if (response.headers['content-range']) {
+      res.setHeader('Content-Range', response.headers['content-range']);
+    }
+
+    res.status(response.status);
+    response.data.pipe(res);
+  } catch (err) {
+    console.error('Media Proxy Error:', err.message);
+    res.status(500).send('Error streaming media');
+  }
+});
+
+// -------------------------------------------------------------
+// 4. STEALTH PROXY WEB READER API
 // -------------------------------------------------------------
 app.get('/api/proxy', async (req, res) => {
   const targetUrl = req.query.url;
@@ -168,13 +210,14 @@ app.get('/api/proxy', async (req, res) => {
   try {
     const response = await axios.get(targetUrl, {
       headers: DEFAULT_HEADERS,
-      timeout: 8000,
+      timeout: 10000,
       maxRedirects: 5,
       responseType: 'text'
     });
 
     const contentType = response.headers['content-type'] || 'text/html';
     
+    // If video, audio, image, or raw binary, stream directly via media-proxy
     if (!contentType.includes('text/html')) {
       res.setHeader('Content-Type', contentType);
       return res.send(response.data);
@@ -182,10 +225,21 @@ app.get('/api/proxy', async (req, res) => {
 
     const $ = cheerio.load(response.data);
 
-    // Strip tracking scripts and annoying ads
-    $('script').remove();
-    $('iframe').remove();
-    $('noscript').remove();
+    // Strip external trackers, ads, third-party analytics
+    $('script[src*="analytics"]').remove();
+    $('script[src*="google-analytics"]').remove();
+    $('script[src*="facebook"]').remove();
+
+    // Proxy HTML5 Video tags & source elements
+    $('video, audio, source').each((_, el) => {
+      const src = $(el).attr('src');
+      if (src) {
+        try {
+          const fullSrc = new URL(src, targetUrl).href;
+          $(el).attr('src', `/api/media-proxy?url=${encodeURIComponent(fullSrc)}`);
+        } catch (e) {}
+      }
+    });
 
     // Rewrite relative links to proxy links
     $('a').each((_, el) => {
@@ -222,7 +276,7 @@ app.get('/api/proxy', async (req, res) => {
       ">
         <div style="display: flex; align-items: center; gap: 12px;">
           <span style="background: #10b981; color: #000; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;">
-            🛡️ PROXIED & SECURED
+            🛡️ PROXIED & SECURED (VIDEO SUPPORTED)
           </span>
           <span style="font-weight: 600; color: #94a3b8; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 450px;">
             ${targetUrl}
@@ -261,7 +315,7 @@ app.get('/api/proxy', async (req, res) => {
 // Start Server
 app.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🔒 ShadowSearch Pro / Stealth Proxy Server Running!`);
+  console.log(`🔒 ShadowSearch Pro / Stealth Media Proxy Server Running!`);
   console.log(`🌐 Open in browser: http://localhost:${PORT}`);
   console.log(`====================================================`);
 });
