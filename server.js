@@ -73,7 +73,7 @@ app.get('/api/search', async (req, res) => {
       results.push(...wikiResults);
     }
 
-    // Uncensored Bing Web Search (SafeSearch Disabled)
+    // Uncensored Bing Web Search
     if (engine === 'duckduckgo' || engine === 'all' || engine === 'web') {
       const webResults = await fetchBingUncensored(query);
       results.push(...webResults);
@@ -98,6 +98,108 @@ app.get('/api/search', async (req, res) => {
   } catch (error) {
     console.error('Search API error:', error.message);
     res.status(500).json({ error: 'Gagal melakukan pencarian', details: error.message });
+  }
+});
+
+// -------------------------------------------------------------
+// 2B. ANONYMOUS IMAGE SEARCH API
+// -------------------------------------------------------------
+app.get('/api/images', async (req, res) => {
+  const query = req.query.q;
+  if (!query) return res.json({ results: [] });
+
+  try {
+    const searchUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&adlt=off&form=HDRSC2`;
+    const response = await axios.get(searchUrl, {
+      headers: {
+        ...DEFAULT_HEADERS,
+        'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF'
+      },
+      timeout: 7000
+    });
+
+    const $ = cheerio.load(response.data);
+    const images = [];
+
+    $('.iusc').each((i, el) => {
+      if (images.length >= 16) return;
+      try {
+        const m = JSON.parse($(el).attr('m') || '{}');
+        const imgUrl = m.murl;
+        const thumbUrl = m.turl || m.murl;
+        const title = m.t || query;
+        const pageUrl = m.purl || imgUrl;
+
+        if (imgUrl) {
+          images.push({
+            title,
+            imgUrl,
+            thumbUrl: `/api/media-proxy?url=${encodeURIComponent(thumbUrl)}`,
+            pageUrl,
+            proxyImgUrl: `/api/media-proxy?url=${encodeURIComponent(imgUrl)}`
+          });
+        }
+      } catch (e) {}
+    });
+
+    res.json({ query, results: images });
+  } catch (err) {
+    console.error('Image Search Error:', err.message);
+    res.json({ query, results: [] });
+  }
+});
+
+// -------------------------------------------------------------
+// 2C. ANONYMOUS VIDEO SEARCH API
+// -------------------------------------------------------------
+app.get('/api/videos', async (req, res) => {
+  const query = req.query.q;
+  if (!query) return res.json({ results: [] });
+
+  try {
+    const searchUrl = `https://www.bing.com/videos/search?q=${encodeURIComponent(query)}&adlt=off`;
+    const response = await axios.get(searchUrl, {
+      headers: {
+        ...DEFAULT_HEADERS,
+        'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF'
+      },
+      timeout: 7000
+    });
+
+    const $ = cheerio.load(response.data);
+    const videos = [];
+
+    $('.mc_vtvc').each((i, el) => {
+      if (videos.length >= 12) return;
+      const titleEl = $(el).find('.vrhdata');
+      let title = 'Video';
+      let targetUrl = '';
+      
+      try {
+        const vrData = JSON.parse(titleEl.attr('vrdata') || '{}');
+        title = vrData.vt || $(el).find('.mc_vtvc_title').text().trim();
+        targetUrl = vrData.du || $(el).find('a').attr('href');
+      } catch (e) {
+        title = $(el).find('.mc_vtvc_title').text().trim() || 'Video';
+        targetUrl = $(el).find('a').attr('href');
+      }
+
+      const thumbImg = $(el).find('img').attr('src') || $(el).find('img').attr('data-src');
+
+      if (targetUrl && targetUrl.startsWith('http')) {
+        videos.push({
+          title,
+          url: targetUrl,
+          proxyUrl: `/api/proxy?url=${encodeURIComponent(targetUrl)}`,
+          thumbUrl: thumbImg ? `/api/media-proxy?url=${encodeURIComponent(thumbImg)}` : ''
+        });
+      }
+    });
+
+    res.json({ query, results: videos });
+  } catch (err) {
+    console.error('Video Search Error:', err.message);
+    res.json({ query, results: [] });
   }
 });
 
@@ -322,7 +424,7 @@ app.get('/api/proxy', async (req, res) => {
 // Start Server
 app.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🔒 ShadowSearch Pro / Stealth Proxy Server Active!`);
+  console.log(`🔒 ShadowSearch Pro / Advanced Stealth Server Active!`);
   console.log(`🌐 Open in browser: http://localhost:${PORT}`);
   console.log(`====================================================`);
 });

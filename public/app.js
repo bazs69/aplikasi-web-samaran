@@ -1,5 +1,5 @@
 /**
- * ShadowSearch Pro — Main Client Logic
+ * ShadowSearch Pro — Advanced Stealth & Privacy Client Logic
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -30,22 +30,70 @@ document.addEventListener('DOMContentLoaded', () => {
   const pinBtns = document.querySelectorAll('.pin-btn');
   const pinErrorMsg = document.getElementById('pin-error-msg');
   const historyList = document.getElementById('history-list');
+  const historyTitle = document.getElementById('history-title');
   const btnClearHistory = document.getElementById('btn-clear-history');
+
+  const maskingSelect = document.getElementById('masking-select');
+  const autoDestructSelect = document.getElementById('auto-destruct-select');
+  const pageTitle = document.getElementById('page-title');
+  const pageFavicon = document.getElementById('page-favicon');
 
   // State
   let currentEngine = 'all';
   let suggestTimeout = null;
   let vaultPin = localStorage.getItem('shadow_vault_pin') || null;
   let isVaultUnlocked = false;
+  let isDecoyUnlocked = false;
+
+  // Fake Decoy History for Decoy PIN (9999)
+  const DECOY_HISTORY = [
+    { query: "Resep Cara Membuat Nasi Goreng Spesial Enak", time: "10:15 AM" },
+    { query: "Tips Belajar Bahasa Inggris Pemula Mudah", time: "09:40 AM" },
+    { query: "Jadwal Pertandingan Liga Utama Sepak Bola", time: "Kemarin" },
+    { query: "Sejarah Perkembangan Komputer dan Jaringan", time: "Kemarin" }
+  ];
 
   // -----------------------------------------------------------
-  // 1. ENGINE SELECTOR CHIPS
+  // 1. TAB MASKING DISGUISE (Penyamaran Judul & Favicon Tab)
+  // -----------------------------------------------------------
+  const TAB_MASKS = {
+    none: {
+      title: "ShadowSearch Pro — Mesin Pencari & Web Samaran Privasi",
+      icon: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>"
+    },
+    gdocs: {
+      title: "Dokumen Tanpa Judul - Google Docs",
+      icon: "https://ssl.gstatic.com/docs/documents/images/kix-favicon7.ico"
+    },
+    gclass: {
+      title: "Kelas Saya - Google Classroom",
+      icon: "https://ssl.gstatic.com/classroom/favicon.png"
+    },
+    wiki: {
+      title: "Wikipedia bahasa Indonesia, ensiklopedia bebas",
+      icon: "https://id.wikipedia.org/static/favicon/wikipedia.ico"
+    }
+  };
+
+  maskingSelect.addEventListener('change', (e) => {
+    const maskKey = e.target.value;
+    const selected = TAB_MASKS[maskKey] || TAB_MASKS.none;
+    document.title = selected.title;
+    pageFavicon.href = selected.icon;
+  });
+
+  // -----------------------------------------------------------
+  // 2. ENGINE SELECTOR CHIPS
   // -----------------------------------------------------------
   engineChips.forEach(chip => {
     chip.addEventListener('click', () => {
       engineChips.forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
       currentEngine = chip.dataset.engine;
+
+      if (searchInput.value.trim()) {
+        executeSearch();
+      }
     });
   });
 
@@ -59,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // -----------------------------------------------------------
-  // 2. SEARCH INPUT & LIVE AUTO-SUGGESTIONS
+  // 3. SEARCH INPUT & LIVE AUTO-SUGGESTIONS
   // -----------------------------------------------------------
   searchInput.addEventListener('input', (e) => {
     const value = e.target.value.trim();
@@ -135,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // -----------------------------------------------------------
-  // 3. EXECUTE METASEARCH
+  // 4. EXECUTE METASEARCH (Web, Gambar, Video, Wiki)
   // -----------------------------------------------------------
   async function executeSearch() {
     const query = searchInput.value.trim();
@@ -160,6 +208,81 @@ document.addEventListener('DOMContentLoaded', () => {
     resultsQueryTag.textContent = `"${query}"`;
     resultsCount.textContent = 'Menghubungkan ke Server Proxy...';
 
+    // A. IMAGE SEARCH MODE
+    if (currentEngine === 'images') {
+      try {
+        const res = await fetch(`/api/images?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        loadingSpinner.classList.add('hidden');
+
+        if (!data.results || data.results.length === 0) {
+          resultsCount.textContent = 'Tidak ada gambar ditemukan';
+          return;
+        }
+
+        resultsCount.textContent = `Menampilkan ${data.results.length} Gambar Anonim`;
+        resultsContainer.innerHTML = `
+          <div class="image-grid">
+            ${data.results.map(img => `
+              <div class="image-card">
+                <div class="image-thumb-wrapper">
+                  <img src="${img.thumbUrl}" alt="${escapeHtml(img.title)}" class="image-thumb" loading="lazy" />
+                </div>
+                <div class="image-title" title="${escapeHtml(img.title)}">${escapeHtml(img.title)}</div>
+                <div style="padding: 6px 10px; display: flex; gap: 6px;">
+                  <a href="${img.proxyImgUrl}" target="_blank" class="btn-proxy-open" style="font-size: 11px; padding: 4px 8px;">🖼️ HD Proxy</a>
+                  <a href="/api/proxy?url=${encodeURIComponent(img.pageUrl)}" target="_self" class="btn-direct-open" style="font-size: 11px; padding: 4px 8px;">Buka Web</a>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } catch (e) {
+        loadingSpinner.classList.add('hidden');
+      }
+      return;
+    }
+
+    // B. VIDEO SEARCH MODE
+    if (currentEngine === 'videos') {
+      try {
+        const res = await fetch(`/api/videos?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        loadingSpinner.classList.add('hidden');
+
+        if (!data.results || data.results.length === 0) {
+          resultsCount.textContent = 'Tidak ada video ditemukan';
+          return;
+        }
+
+        resultsCount.textContent = `Menampilkan ${data.results.length} Video Proxy`;
+        resultsContainer.innerHTML = `
+          <div class="results-grid">
+            ${data.results.map(vid => `
+              <article class="result-card">
+                <div class="card-top">
+                  <span class="card-source">🎬 Video Proxy</span>
+                </div>
+                <a href="${vid.proxyUrl}" target="_self" class="card-title">
+                  ${escapeHtml(vid.title)}
+                </a>
+                <p class="card-snippet">Putar video ini secara terenkripsi via Server Media Proxy.</p>
+                <div class="card-actions">
+                  <a href="${vid.proxyUrl}" target="_self" class="btn-proxy-open">
+                    ▶️ Putar via Stealth Proxy
+                  </a>
+                </div>
+              </article>
+            `).join('')}
+          </div>
+        `;
+      } catch (e) {
+        loadingSpinner.classList.add('hidden');
+      }
+      return;
+    }
+
+    // C. WEB & WIKIPEDIA SEARCH MODE
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&engine=${currentEngine}`);
       const data = await res.json();
@@ -171,7 +294,6 @@ document.addEventListener('DOMContentLoaded', () => {
         resultsContainer.innerHTML = `
           <div style="text-align: center; color: #94a3b8; padding: 30px;">
             <p>Tidak ada hasil pencarian untuk "${escapeHtml(query)}".</p>
-            <p style="font-size: 12px; margin-top: 6px;">Coba gunakan kata kunci lain atau ubah mesin pencari.</p>
           </div>
         `;
         return;
@@ -210,25 +332,18 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       console.error(err);
       loadingSpinner.classList.add('hidden');
-      resultsCount.textContent = 'Gagal memuat hasil';
-      resultsContainer.innerHTML = `
-        <div style="text-align: center; color: #ef4444; padding: 20px;">
-          <p>⚠️ Terjadi kesalahan saat memuat hasil pencarian.</p>
-          <p style="font-size: 12px; color: #94a3b8; margin-top: 4px;">Periksa koneksi jaringan Anda.</p>
-        </div>
-      `;
     }
   }
 
   // -----------------------------------------------------------
-  // 4. VAULT PIN SECURITY & HISTORY LOG
+  // 5. VAULT PIN SECURITY & DECOY PIN (9999) & AUTO-DESTRUCT
   // -----------------------------------------------------------
   btnVault.addEventListener('click', () => {
     openVaultModal();
   });
 
   btnHistory.addEventListener('click', () => {
-    if (vaultPin && !isVaultUnlocked) {
+    if (vaultPin && !isVaultUnlocked && !isDecoyUnlocked) {
       alert('🔒 Silakan buka PIN Vault terlebih dahulu untuk melihat riwayat!');
       openVaultModal();
       return;
@@ -270,23 +385,38 @@ document.addEventListener('DOMContentLoaded', () => {
     const entered = pinInput.value;
     if (entered.length < 4) return;
 
+    // A. DECOY PIN (9999) — UNLOCKS FAKE HARMLESS HISTORY
+    if (entered === '9999') {
+      isDecoyUnlocked = true;
+      isVaultUnlocked = false;
+      document.getElementById('vault-status-label').textContent = 'Vault (Mode Umum)';
+      vaultModal.classList.add('hidden');
+      renderHistory();
+      historyModal.classList.remove('hidden');
+      return;
+    }
+
+    // B. FIRST TIME PIN SETUP
     if (!vaultPin) {
-      // Set new PIN
       vaultPin = entered;
       localStorage.setItem('shadow_vault_pin', vaultPin);
       isVaultUnlocked = true;
+      isDecoyUnlocked = false;
       document.getElementById('vault-status-label').textContent = 'Vault (Terbuka)';
       vaultModal.classList.add('hidden');
-      alert('✅ PIN Vault berhasil dibuat dan diaktifkan!');
-    } else if (entered === vaultPin) {
-      // PIN Correct
+      alert('✅ PIN Vault Utama berhasil dibuat dan diaktifkan!');
+      return;
+    }
+
+    // C. REAL PIN VERIFICATION
+    if (entered === vaultPin) {
       isVaultUnlocked = true;
+      isDecoyUnlocked = false;
       document.getElementById('vault-status-label').textContent = 'Vault (Terbuka)';
       vaultModal.classList.add('hidden');
       renderHistory();
       historyModal.classList.remove('hidden');
     } else {
-      // Wrong PIN
       pinErrorMsg.classList.remove('hidden');
       pinInput.value = '';
     }
@@ -296,7 +426,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let history = getHistoryArray();
     const timestamp = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
     
-    // Add to front, limit to 50 items
     history = history.filter(h => h.query !== query);
     history.unshift({ query, time: timestamp });
     if (history.length > 50) history.pop();
@@ -315,6 +444,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderHistory() {
+    // If DECOY PIN (9999) was used, show fake harmless history!
+    if (isDecoyUnlocked) {
+      historyTitle.textContent = "📜 Riwayat Pencarian Umum";
+      historyList.innerHTML = DECOY_HISTORY.map(item => `
+        <div class="history-item">
+          <span class="history-item-query" data-query="${escapeHtml(item.query)}">
+            🔍 ${escapeHtml(item.query)}
+          </span>
+          <span class="history-item-time">${item.time}</span>
+        </div>
+      `).join('');
+      return;
+    }
+
+    // Real History
+    historyTitle.textContent = "📜 Riwayat Pencarian Utama (Tersandi)";
     const history = getHistoryArray();
     if (history.length === 0) {
       historyList.innerHTML = '<p style="color: #64748b; text-align: center; padding: 20px;">Belum ada riwayat pencarian tersimpan.</p>';
@@ -340,13 +485,29 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   btnClearHistory.addEventListener('click', () => {
+    if (isDecoyUnlocked) {
+      alert('Riwayat umum tidak dapat dihapus.');
+      return;
+    }
     if (confirm('Apakah Anda yakin ingin menghapus seluruh riwayat pencarian lokal?')) {
       localStorage.removeItem('shadow_history_data');
       renderHistory();
     }
   });
 
-  // Close modals
+  // Auto Destruct Timer Setting
+  autoDestructSelect.addEventListener('change', (e) => {
+    const val = e.target.value;
+    if (val === '15') {
+      alert('⏳ Riwayat otomatis akan dihapus setiap 15 menit.');
+      setTimeout(() => localStorage.removeItem('shadow_history_data'), 15 * 60 * 1000);
+    } else if (val === '60') {
+      alert('⏳ Riwayat otomatis akan dihapus setiap 1 jam.');
+      setTimeout(() => localStorage.removeItem('shadow_history_data'), 60 * 60 * 1000);
+    }
+  });
+
+  // Close Modals
   document.querySelectorAll('.btn-close-modal').forEach(btn => {
     btn.addEventListener('click', () => {
       vaultModal.classList.add('hidden');
@@ -355,7 +516,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // -----------------------------------------------------------
-  // 5. PANIC DISGUISE MODE (ESC KEY & TOGGLE)
+  // 6. PANIC DISGUISE MODE (ESC KEY & TOGGLE)
   // -----------------------------------------------------------
   function activatePanic() {
     panicOverlay.classList.remove('hidden');
@@ -368,7 +529,6 @@ document.addEventListener('DOMContentLoaded', () => {
   btnPanic.addEventListener('click', activatePanic);
   btnExitPanic.addEventListener('click', deactivatePanic);
 
-  // Global ESC Key Listener for Emergency Disguise
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (!panicOverlay.classList.contains('hidden')) {
@@ -379,7 +539,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Helper
   function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/[&<>"']/g, m => ({

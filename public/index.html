@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ShadowSearch Pro — Mesin Pencari & Web Samaran Privasi</title>
+  <title id="page-title">ShadowSearch Pro — Mesin Pencari & Web Samaran Privasi</title>
   <meta name="description" content="Aplikasi mesin pencari samaran dengan server-side proxy terenkripsi untuk melindungi riwayat pencarian dari pemantauan WiFi.">
+  <link id="page-favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -28,13 +29,24 @@
       </div>
     </div>
 
+    <!-- Tab Masking Selector (Penyamaran Judul Tab Browser) -->
+    <div class="tab-masking-group">
+      <label for="masking-select" class="masking-label">🎭 Penyamaran Tab:</label>
+      <select id="masking-select" class="masking-dropdown">
+        <option value="none">🔒 Normal (ShadowSearch)</option>
+        <option value="gdocs">📄 Google Docs (Dokumen Tugas.docx)</option>
+        <option value="gclass">🏫 Google Classroom (Kelas X-IPA)</option>
+        <option value="wiki">📚 Wikipedia Indonesia</option>
+      </select>
+    </div>
+
     <!-- Live WiFi Protection Status -->
     <div class="wifi-status-pill tooltip-trigger">
       <span class="pulse-dot"></span>
       <span class="status-text">WiFi Obfuscation: <strong>AKTIF</strong></span>
       <div class="tooltip-box">
         <h4>🛡️ Bagaimana Kamu Dilindungi Dari Pemilik WiFi?</h4>
-        <p>Semua permintaan pencarian & halaman web diproses oleh <strong>Server Proxy Terenkripsi (HTTPS)</strong>. Router WiFi pemilik tempat Anda berada hanya melihat koneksi ke server ini, <em>bukan kata kunci atau situs yang Anda buka!</em></p>
+        <p>Semua permintaan pencarian, gambar, video & halaman web diproses oleh <strong>Server Proxy Terenkripsi (HTTPS)</strong>. Router WiFi pemilik tempat Anda berada hanya melihat koneksi ke server ini!</p>
       </div>
     </div>
 
@@ -45,7 +57,7 @@
         <span>Riwayat</span>
       </button>
 
-      <button id="btn-vault" class="btn-icon" title="Kunci Brankas (PIN)">
+      <button id="btn-vault" class="btn-icon" title="Kunci Brankas (PIN & Decoy PIN)">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         <span id="vault-status-label">PIN Vault</span>
       </button>
@@ -63,7 +75,7 @@
     <!-- Hero Header -->
     <section class="hero-section">
       <h1 class="hero-title">Cari Apapun Tanpa Jejak WiFi</h1>
-      <p class="hero-subtitle">Metasearch engine terenkripsi dengan server-side stealth reader & brankas lokal tersandi.</p>
+      <p class="hero-subtitle">Metasearch engine terenkripsi dengan server-side stealth reader, gambar/video proxy, & brankas tersandi.</p>
 
       <!-- Search Box Container -->
       <div class="search-box-wrapper">
@@ -75,7 +87,7 @@
           <input 
             type="text" 
             id="search-input" 
-            placeholder="Ketik pencarian atau URL web..." 
+            placeholder="Ketik pencarian, nama gambar, video, atau URL web..." 
             autocomplete="off"
             spellcheck="false"
           />
@@ -95,9 +107,10 @@
       <!-- Engine Selector & Stealth Toggles -->
       <div class="controls-bar">
         <div class="engine-selector">
-          <span class="control-label">Mesin:</span>
-          <button class="engine-chip active" data-engine="all">⚡ Metasearch (Semua)</button>
-          <button class="engine-chip" data-engine="duckduckgo">🦆 DuckDuckGo</button>
+          <span class="control-label">Mode:</span>
+          <button class="engine-chip active" data-engine="all">⚡ Web Metasearch</button>
+          <button class="engine-chip" data-engine="images">🖼️ Gambar Anonim</button>
+          <button class="engine-chip" data-engine="videos">🎬 Video Proxy</button>
           <button class="engine-chip" data-engine="wikipedia">📚 Wikipedia ID</button>
         </div>
 
@@ -115,7 +128,7 @@
     <section id="quick-links" class="quick-links-section">
       <div class="quick-chip" data-query="Teknologi Kecerdasan Buatan AI terbaru">🤖 Teknologi AI</div>
       <div class="quick-chip" data-query="Berita Utama Indonesia hari ini">📰 Berita Terkini</div>
-      <div class="quick-chip" data-query="Ensiklopedia Alam dan Sains">🌌 Sains & Alam</div>
+      <div class="quick-chip" data-query="Pemandangan alam pantai paling indah HD">🖼️ Foto Alam HD</div>
       <div class="quick-chip" data-query="Tips Privasi Keamanan Siber">🔒 Cyber Security</div>
     </section>
 
@@ -127,7 +140,7 @@
           <span id="results-query-tag" class="query-badge">""</span>
         </div>
         <div class="wifi-shield-badge">
-          <span>🔒 Terlindungi Server Proxy</span>
+          <span>🔒 Terlindungi Server Proxy (UNCENSORED)</span>
         </div>
       </div>
 
@@ -141,15 +154,15 @@
 
   </main>
 
-  <!-- Vault PIN Modal -->
+  <!-- Vault PIN Modal (Supports Real PIN & Decoy PIN) -->
   <div id="vault-modal" class="modal-overlay hidden">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>🔒 Brankas Riwayat Tersandi</h3>
+        <h3>🔒 Brankas PIN & Decoy PIN (Palsu)</h3>
         <button class="btn-close-modal">✕</button>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">Masukkan 4-digit PIN keamanan Anda untuk mengakses atau menyimpan riwayat lokal.</p>
+        <p class="modal-desc">Masukkan 4-digit PIN Anda. <em>(Tips: PIN Palsu `9999` akan menampilkan riwayat palsu jika dipaksa seseorang!)</em></p>
         
         <div class="pin-display">
           <input type="password" id="pin-input" maxlength="4" placeholder="••••" readonly />
@@ -162,6 +175,15 @@
           <button class="pin-btn pin-clear">C</button><button class="pin-btn">0</button><button class="pin-btn pin-enter">↵</button>
         </div>
 
+        <div class="auto-destruct-settings">
+          <label for="auto-destruct-select">⏳ Self-Destruct Riwayat:</label>
+          <select id="auto-destruct-select" class="destruct-dropdown">
+            <option value="none">Manual Hapus</option>
+            <option value="15">Hapus Otomatis Setiap 15 Menit</option>
+            <option value="60">Hapus Otomatis Setiap 1 Jam</option>
+          </select>
+        </div>
+
         <p id="pin-error-msg" class="error-msg hidden">PIN Salah! Silakan coba lagi.</p>
       </div>
     </div>
@@ -171,14 +193,14 @@
   <div id="history-modal" class="modal-overlay hidden">
     <div class="modal-card large">
       <div class="modal-header">
-        <h3>📜 Riwayat Pencarian Lokal (Tersandi)</h3>
+        <h3 id="history-title">📜 Riwayat Pencarian Lokal (Tersandi)</h3>
         <div class="modal-actions">
           <button id="btn-clear-history" class="btn-danger-sm">🗑️ Hapus Semua</button>
           <button class="btn-close-modal">✕</button>
         </div>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">Riwayat ini disimpan secara lokal di browser Anda dengan enkripsi PIN dan tidak pernah dikirim ke server manapun.</p>
+        <p id="history-desc" class="modal-desc">Riwayat ini disimpan secara lokal di browser Anda dengan enkripsi PIN dan tidak pernah dikirim ke server manapun.</p>
         <div id="history-list" class="history-list"></div>
       </div>
     </div>
@@ -186,7 +208,6 @@
 
   <!-- PANIC DISGUISE OVERLAY (Press ESC to toggle) -->
   <div id="panic-overlay" class="panic-overlay hidden">
-    <!-- Fake Google Docs Header & Editor UI -->
     <div class="fake-docs-bar">
       <div class="docs-icon">📄</div>
       <div class="docs-title">
