@@ -3,22 +3,94 @@ const cors = require('cors');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const path = require('path');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(express.json());
+// ============================================================
+// SECURITY HARDENING — Perkuatan Keamanan Server
+// ============================================================
+
+// 1. Helmet: Set HTTP security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Disabled so proxied pages load normally
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: false
+}));
+
+// 2. Rate Limiting — Blokir otomatis jika ada terlalu banyak request (anti-bruteforce/DDoS)
+const limiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 menit
+  max: 60,              // Maks 60 request per menit per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Terlalu banyak permintaan. Coba lagi dalam 1 menit.' }
+});
+
+// Strictest limit untuk proxy agar tidak disalahgunakan
+const proxyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: 'Proxy rate limit. Coba lagi dalam 1 menit.' }
+});
+
+app.use('/api/', limiter);
+app.use('/api/proxy', proxyLimiter);
+app.use('/api/media-proxy', proxyLimiter);
+
+// 3. No-Referrer header (sembunyikan dari situs tujuan)
+app.use((req, res, next) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+  next();
+});
+
+// 4. Block server fingerprinting
+app.disable('x-powered-by');
+
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGIN || '*',
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Stealth User-Agent Spoofing & No-SafeSearch Headers
+// ============================================================
+// STEALTH HEADERS
+// ============================================================
 const DEFAULT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-  'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF; NRSLT=20'
+  'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF; NRSLT=20',
+  'DNT': '1',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none'
 };
+
+// Blocked domains to prevent SSRF attacks
+const BLOCKED_DOMAINS = [
+  'localhost', '127.0.0.1', '0.0.0.0', '10.', '192.168.', '172.16.',
+  '169.254.', '::1', 'metadata.google', 'metadata.internal'
+];
+
+function isBlockedUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    return BLOCKED_DOMAINS.some(d => host.includes(d));
+  } catch {
+    return true;
+  }
+}
 
 // Helper: Decode Bing Base64 URLs
 function decodeBingUrl(url) {
@@ -34,12 +106,87 @@ function decodeBingUrl(url) {
   return url;
 }
 
-// -------------------------------------------------------------
+// ============================================================
+// HELPER: Rewrite ALL links inside proxied page to stay on proxy
+// This fixes the "link going to real website" bug
+// ============================================================
+function rewriteAllLinksToProxy(html, baseUrl) {
+  const $ = cheerio.load(html);
+
+  // Rewrite <a href>
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href');
+    if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:')) return;
+    try {
+      const fullUrl = new URL(href, baseUrl).href;
+      if (fullUrl.startsWith('http')) {
+        $(el).attr('href', `/api/proxy?url=${encodeURIComponent(fullUrl)}`);
+        $(el).attr('target', '_self');
+        $(el).removeAttr('rel'); // Remove noopener/noreferrer that could break routing
+      }
+    } catch (e) {}
+  });
+
+  // Rewrite <form action> to proxy
+  $('form[action]').each((_, el) => {
+    const action = $(el).attr('action');
+    if (!action) return;
+    try {
+      const fullAction = new URL(action, baseUrl).href;
+      $(el).attr('action', `/api/proxy?url=${encodeURIComponent(fullAction)}`);
+    } catch (e) {}
+  });
+
+  // Proxy <video> and <audio> src
+  $('video source, audio source, video[src], audio[src]').each((_, el) => {
+    const src = $(el).attr('src');
+    if (src) {
+      try {
+        const fullSrc = new URL(src, baseUrl).href;
+        $(el).attr('src', `/api/media-proxy?url=${encodeURIComponent(fullSrc)}`);
+      } catch (e) {}
+    }
+  });
+
+  // Fix image sources (direct, no proxy needed for images for speed)
+  $('img[src]').each((_, el) => {
+    const src = $(el).attr('src');
+    if (src && !src.startsWith('data:')) {
+      try {
+        const fullSrc = new URL(src, baseUrl).href;
+        $(el).attr('src', fullSrc);
+      } catch (e) {}
+    }
+  });
+
+  // Fix srcset
+  $('img[srcset], source[srcset]').each((_, el) => {
+    const srcset = $(el).attr('srcset');
+    if (srcset) {
+      const newSrcset = srcset.replace(/([^\s,]+)(\s[^\s,]+)?/g, (match, url, size) => {
+        try {
+          const full = new URL(url.trim(), baseUrl).href;
+          return full + (size || '');
+        } catch {
+          return match;
+        }
+      });
+      $(el).attr('srcset', newSrcset);
+    }
+  });
+
+  // Remove tracking scripts
+  $('script[src*="analytics"], script[src*="gtag"], script[src*="facebook"], script[src*="doubleclick"]').remove();
+
+  return $;
+}
+
+// ============================================================
 // 1. SEARCH SUGGESTIONS API
-// -------------------------------------------------------------
+// ============================================================
 app.get('/api/suggest', async (req, res) => {
   const query = req.query.q;
-  if (!query) return res.json([]);
+  if (!query || query.length > 200) return res.json([]);
 
   try {
     const response = await axios.get(
@@ -53,33 +200,26 @@ app.get('/api/suggest', async (req, res) => {
   }
 });
 
-// -------------------------------------------------------------
-// 2. UNFILTERED METASEARCH API (SafeSearch OFF)
-// -------------------------------------------------------------
+// ============================================================
+// 2. METASEARCH API
+// ============================================================
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
   const engine = req.query.engine || 'all';
 
-  if (!query) {
-    return res.status(400).json({ error: 'Query q diperlukan' });
+  if (!query || query.length > 300) {
+    return res.status(400).json({ error: 'Query tidak valid' });
   }
 
   try {
     let results = [];
-
-    // Wikipedia
     if (engine === 'wikipedia' || engine === 'all') {
-      const wikiResults = await fetchWikipedia(query, 'id');
-      results.push(...wikiResults);
+      results.push(...await fetchWikipedia(query, 'id'));
     }
-
-    // Uncensored Bing Web Search
     if (engine === 'duckduckgo' || engine === 'all' || engine === 'web') {
-      const webResults = await fetchBingUncensored(query);
-      results.push(...webResults);
+      results.push(...await fetchBingUncensored(query));
     }
 
-    // Deduplicate by URL
     const uniqueResults = [];
     const seenUrls = new Set();
     for (const item of results) {
@@ -89,32 +229,23 @@ app.get('/api/search', async (req, res) => {
       }
     }
 
-    res.json({
-      query,
-      engine,
-      count: uniqueResults.length,
-      results: uniqueResults
-    });
+    res.json({ query, engine, count: uniqueResults.length, results: uniqueResults });
   } catch (error) {
-    console.error('Search API error:', error.message);
-    res.status(500).json({ error: 'Gagal melakukan pencarian', details: error.message });
+    res.status(500).json({ error: 'Gagal melakukan pencarian' });
   }
 });
 
-// -------------------------------------------------------------
-// 2B. ANONYMOUS IMAGE SEARCH API
-// -------------------------------------------------------------
+// ============================================================
+// 2B. IMAGE SEARCH API
+// ============================================================
 app.get('/api/images', async (req, res) => {
   const query = req.query.q;
-  if (!query) return res.json({ results: [] });
+  if (!query || query.length > 300) return res.json({ results: [] });
 
   try {
-    const searchUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&adlt=off&form=HDRSC2`;
+    const searchUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&adlt=off`;
     const response = await axios.get(searchUrl, {
-      headers: {
-        ...DEFAULT_HEADERS,
-        'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF'
-      },
+      headers: { ...DEFAULT_HEADERS, 'Cookie': 'SRCHHPGUSR=ADLT=OFF' },
       timeout: 7000
     });
 
@@ -125,18 +256,13 @@ app.get('/api/images', async (req, res) => {
       if (images.length >= 16) return;
       try {
         const m = JSON.parse($(el).attr('m') || '{}');
-        const imgUrl = m.murl;
-        const thumbUrl = m.turl || m.murl;
-        const title = m.t || query;
-        const pageUrl = m.purl || imgUrl;
-
-        if (imgUrl) {
+        if (m.murl) {
           images.push({
-            title,
-            imgUrl,
-            thumbUrl: `/api/media-proxy?url=${encodeURIComponent(thumbUrl)}`,
-            pageUrl,
-            proxyImgUrl: `/api/media-proxy?url=${encodeURIComponent(imgUrl)}`
+            title: m.t || query,
+            imgUrl: m.murl,
+            thumbUrl: `/api/media-proxy?url=${encodeURIComponent(m.turl || m.murl)}`,
+            pageUrl: m.purl || m.murl,
+            proxyImgUrl: `/api/media-proxy?url=${encodeURIComponent(m.murl)}`
           });
         }
       } catch (e) {}
@@ -144,25 +270,21 @@ app.get('/api/images', async (req, res) => {
 
     res.json({ query, results: images });
   } catch (err) {
-    console.error('Image Search Error:', err.message);
     res.json({ query, results: [] });
   }
 });
 
-// -------------------------------------------------------------
-// 2C. ANONYMOUS VIDEO SEARCH API
-// -------------------------------------------------------------
+// ============================================================
+// 2C. VIDEO SEARCH API
+// ============================================================
 app.get('/api/videos', async (req, res) => {
   const query = req.query.q;
-  if (!query) return res.json({ results: [] });
+  if (!query || query.length > 300) return res.json({ results: [] });
 
   try {
     const searchUrl = `https://www.bing.com/videos/search?q=${encodeURIComponent(query)}&adlt=off`;
     const response = await axios.get(searchUrl, {
-      headers: {
-        ...DEFAULT_HEADERS,
-        'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF'
-      },
+      headers: { ...DEFAULT_HEADERS, 'Cookie': 'SRCHHPGUSR=ADLT=OFF' },
       timeout: 7000
     });
 
@@ -171,19 +293,8 @@ app.get('/api/videos', async (req, res) => {
 
     $('.mc_vtvc').each((i, el) => {
       if (videos.length >= 12) return;
-      const titleEl = $(el).find('.vrhdata');
-      let title = 'Video';
-      let targetUrl = '';
-      
-      try {
-        const vrData = JSON.parse(titleEl.attr('vrdata') || '{}');
-        title = vrData.vt || $(el).find('.mc_vtvc_title').text().trim();
-        targetUrl = vrData.du || $(el).find('a').attr('href');
-      } catch (e) {
-        title = $(el).find('.mc_vtvc_title').text().trim() || 'Video';
-        targetUrl = $(el).find('a').attr('href');
-      }
-
+      const title = $(el).find('.mc_vtvc_title').text().trim() || 'Video';
+      const targetUrl = $(el).find('a').attr('href');
       const thumbImg = $(el).find('img').attr('src') || $(el).find('img').attr('data-src');
 
       if (targetUrl && targetUrl.startsWith('http')) {
@@ -198,45 +309,33 @@ app.get('/api/videos', async (req, res) => {
 
     res.json({ query, results: videos });
   } catch (err) {
-    console.error('Video Search Error:', err.message);
     res.json({ query, results: [] });
   }
 });
 
-// Fetch Wikipedia
 async function fetchWikipedia(query, lang = 'id') {
   try {
     const wikiDomain = `${lang}.wikipedia.org`;
-    const wikiUrl = `https://${wikiDomain}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json`;
-    const res = await axios.get(wikiUrl, { headers: DEFAULT_HEADERS, timeout: 5000 });
-    const list = res.data?.query?.search || [];
-
-    return list.slice(0, 6).map(item => {
-      const cleanSnippet = item.snippet.replace(/<[^>]+>/g, '');
-      return {
-        title: item.title,
-        url: `https://${wikiDomain}/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`,
-        snippet: cleanSnippet || 'Ensiklopedia Wikipedia Bebas.',
-        source: 'Wikipedia (ID)',
-        badge: 'wiki'
-      };
-    });
-  } catch (err) {
-    return [];
-  }
+    const res = await axios.get(
+      `https://${wikiDomain}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json`,
+      { headers: DEFAULT_HEADERS, timeout: 5000 }
+    );
+    return (res.data?.query?.search || []).slice(0, 6).map(item => ({
+      title: item.title,
+      url: `https://${wikiDomain}/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`,
+      snippet: item.snippet.replace(/<[^>]+>/g, '') || 'Wikipedia.',
+      source: 'Wikipedia (ID)',
+      badge: 'wiki'
+    }));
+  } catch { return []; }
 }
 
-// Uncensored Bing Web Search (SafeSearch=OFF)
 async function fetchBingUncensored(query) {
   try {
-    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&adlt=off&setmkt=en-US&setlang=en-US`;
-    const res = await axios.get(searchUrl, {
-      headers: {
-        ...DEFAULT_HEADERS,
-        'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF; NRSLT=20'
-      },
-      timeout: 7000
-    });
+    const res = await axios.get(
+      `https://www.bing.com/search?q=${encodeURIComponent(query)}&adlt=off&setmkt=en-US`,
+      { headers: { ...DEFAULT_HEADERS, 'Cookie': 'SRCHHPGUSR=ADLT=OFF; NRSLT=20' }, timeout: 7000 }
+    );
     const $ = cheerio.load(res.data);
     const results = [];
 
@@ -244,187 +343,139 @@ async function fetchBingUncensored(query) {
       if (results.length >= 12) return;
       const titleEl = $(el).find('h2 a');
       const title = titleEl.text().trim();
-      const rawUrl = titleEl.attr('href');
-      const cleanUrl = decodeBingUrl(rawUrl);
-      const snippet = $(el).find('.b_caption p').text().trim() || $(el).find('.b_algoDesc').text().trim();
+      const cleanUrl = decodeBingUrl(titleEl.attr('href'));
+      const snippet = $(el).find('.b_caption p').text().trim() || '';
 
       if (title && cleanUrl && cleanUrl.startsWith('http')) {
-        results.push({
-          title,
-          url: cleanUrl,
-          snippet: snippet || 'Hasil web terenkripsi.',
-          source: 'Web Search',
-          badge: 'web'
-        });
+        results.push({ title, url: cleanUrl, snippet: snippet || 'Hasil web.', source: 'Web Search', badge: 'web' });
       }
     });
 
     return results;
-  } catch (err) {
-    return [];
-  }
+  } catch { return []; }
 }
 
-// -------------------------------------------------------------
-// 3. MEDIA STREAM PROXY (Video/Audio)
-// -------------------------------------------------------------
+// ============================================================
+// 3. MEDIA STREAM PROXY
+// ============================================================
 app.get('/api/media-proxy', async (req, res) => {
   const mediaUrl = req.query.url;
-  if (!mediaUrl) return res.status(400).send('Media URL missing');
+  if (!mediaUrl) return res.status(400).send('URL missing');
+  if (isBlockedUrl(mediaUrl)) return res.status(403).send('Blocked');
 
   try {
-    const reqHeaders = {
-      ...DEFAULT_HEADERS,
-      'Referer': mediaUrl
-    };
-    if (req.headers.range) {
-      reqHeaders['Range'] = req.headers.range;
-    }
+    const reqHeaders = { ...DEFAULT_HEADERS, 'Referer': mediaUrl };
+    if (req.headers.range) reqHeaders['Range'] = req.headers.range;
 
     const response = await axios({
-      method: 'get',
-      url: mediaUrl,
-      headers: reqHeaders,
-      responseType: 'stream',
-      timeout: 20000
+      method: 'get', url: mediaUrl,
+      headers: reqHeaders, responseType: 'stream', timeout: 20000
     });
 
-    if (response.headers['content-type']) {
-      res.setHeader('Content-Type', response.headers['content-type']);
-    }
-    if (response.headers['content-length']) {
-      res.setHeader('Content-Length', response.headers['content-length']);
-    }
-    if (response.headers['accept-ranges']) {
-      res.setHeader('Accept-Ranges', response.headers['accept-ranges']);
-    }
-    if (response.headers['content-range']) {
-      res.setHeader('Content-Range', response.headers['content-range']);
-    }
+    const ct = response.headers['content-type'];
+    if (ct) res.setHeader('Content-Type', ct);
+    if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
+    if (response.headers['accept-ranges']) res.setHeader('Accept-Ranges', response.headers['accept-ranges']);
+    if (response.headers['content-range']) res.setHeader('Content-Range', response.headers['content-range']);
 
     res.status(response.status);
     response.data.pipe(res);
   } catch (err) {
-    console.error('Media Proxy Error:', err.message);
-    res.status(500).send('Error streaming media');
+    res.status(500).send('Stream error');
   }
 });
 
-// -------------------------------------------------------------
-// 4. UNLIMITED STEALTH PROXY WEB READER
-// -------------------------------------------------------------
+// ============================================================
+// 4. STEALTH PROXY WEB READER — FIXED LINK REWRITING
+// ============================================================
 app.get('/api/proxy', async (req, res) => {
   const targetUrl = req.query.url;
-  if (!targetUrl) {
-    return res.status(400).send('URL target tidak ditemukan');
+  if (!targetUrl) return res.status(400).send('URL tidak ditemukan');
+  if (isBlockedUrl(targetUrl)) return res.status(403).send('URL ini tidak diizinkan.');
+
+  try {
+    new URL(targetUrl); // Validate URL format
+  } catch {
+    return res.status(400).send('URL tidak valid');
   }
 
   try {
     const response = await axios.get(targetUrl, {
-      headers: {
-        ...DEFAULT_HEADERS,
-        'Referer': targetUrl
-      },
-      timeout: 12000,
-      maxRedirects: 5,
-      responseType: 'text'
+      headers: { ...DEFAULT_HEADERS, 'Referer': targetUrl },
+      timeout: 12000, maxRedirects: 5, responseType: 'text'
     });
 
     const contentType = response.headers['content-type'] || 'text/html';
-    
+
     if (!contentType.includes('text/html')) {
       res.setHeader('Content-Type', contentType);
       return res.send(response.data);
     }
 
-    const $ = cheerio.load(response.data);
+    // === FULL LINK REWRITE via helper ===
+    const $ = rewriteAllLinksToProxy(response.data, targetUrl);
 
-    // Proxy HTML5 Video/Audio elements
-    $('video, audio, source').each((_, el) => {
-      const src = $(el).attr('src');
-      if (src) {
-        try {
-          const fullSrc = new URL(src, targetUrl).href;
-          $(el).attr('src', `/api/media-proxy?url=${encodeURIComponent(fullSrc)}`);
-        } catch (e) {}
-      }
-    });
-
-    // Rewrite relative links to proxy links
-    $('a').each((_, el) => {
-      const href = $(el).attr('href');
-      if (href) {
-        try {
-          const fullUrl = new URL(href, targetUrl).href;
-          $(el).attr('href', `/api/proxy?url=${encodeURIComponent(fullUrl)}`);
-          $(el).attr('target', '_self');
-        } catch (e) {}
-      }
-    });
-
-    // Fix image sources
-    $('img').each((_, el) => {
-      const src = $(el).attr('src');
-      if (src) {
-        try {
-          const fullSrc = new URL(src, targetUrl).href;
-          $(el).attr('src', fullSrc);
-        } catch (e) {}
-      }
-    });
-
-    // Stealth Top Bar
+    // Inject stealth banner
     const stealthBanner = `
-      <div id="samaran-stealth-bar" style="
-        position: fixed; top: 0; left: 0; right: 0; z-index: 999999;
-        background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(12px);
-        color: #f8fafc; font-family: system-ui, -apple-system, sans-serif;
-        padding: 10px 20px; display: flex; align-items: center; justify-content: space-between;
-        border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 14px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      <div id="shadowsearch-bar" style="
+        position:fixed;top:0;left:0;right:0;z-index:999999;
+        background:rgba(7,10,18,0.97);backdrop-filter:blur(12px);
+        color:#f8fafc;font-family:system-ui,sans-serif;
+        padding:8px 16px;display:flex;align-items:center;justify-content:space-between;
+        border-bottom:1px solid rgba(6,182,212,0.3);font-size:13px;
+        box-shadow:0 4px 20px rgba(0,0,0,0.7);flex-wrap:wrap;gap:8px;
       ">
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <span style="background: #10b981; color: #000; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;">
-            🛡️ PROXIED & SECURED (UNCENSORED)
-          </span>
-          <span style="font-weight: 600; color: #94a3b8; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 450px;">
-            ${targetUrl}
-          </span>
+        <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+          <span style="background:#10b981;color:#000;padding:2px 7px;border-radius:4px;font-weight:800;font-size:10px;white-space:nowrap;">🛡️ PROXIED</span>
+          <span style="color:#94a3b8;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;">${targetUrl}</span>
         </div>
-        <div style="display: flex; gap: 10px;">
-          <button onclick="window.history.back()" style="background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 5px 12px; border-radius: 6px; cursor: pointer;">
-            ← Kembali
-          </button>
-          <a href="${targetUrl}" target="_blank" style="background: #3b82f6; color: #fff; padding: 5px 12px; border-radius: 6px; text-decoration: none; font-size: 13px;">
-            Buka Asli ↗
-          </a>
+        <div style="display:flex;gap:8px;flex-shrink:0;">
+          <button onclick="window.history.back()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;">← Kembali</button>
+          <a href="/" style="background:#3b82f6;color:#fff;padding:5px 12px;border-radius:6px;text-decoration:none;font-size:12px;">🔍 ShadowSearch</a>
         </div>
       </div>
-      <div style="height: 50px;"></div>
+      <div style="height:44px;"></div>
     `;
-
     $('body').prepend(stealthBanner);
 
+    // Base tag to help resolve relative resources on proxied page
+    $('head').prepend(`<base href="${targetUrl}" />`);
+
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
     res.send($.html());
+
   } catch (err) {
     res.status(500).send(`
-      <div style="font-family: sans-serif; padding: 40px; text-align: center; color: #ef4444; background: #0f172a; min-height: 100vh;">
+      <html><body style="font-family:sans-serif;padding:40px;text-align:center;color:#ef4444;background:#0f172a;min-height:100vh;">
         <h2>⚠️ Gagal Memuat Halaman via Proxy</h2>
-        <p style="color: #94a3b8;">Halaman target (${targetUrl}) memblokir koneksi proxy atau sedang offline.</p>
-        <p style="font-family: monospace; font-size: 12px; color: #64748b;">${err.message}</p>
-        <button onclick="window.history.back()" style="margin-top: 20px; background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer;">
-          Kembali ke Pencarian
-        </button>
-      </div>
+        <p style="color:#94a3b8;">Halaman (${targetUrl}) memblokir proxy atau sedang offline.</p>
+        <p style="font-size:12px;color:#64748b;">${err.message}</p>
+        <a href="/" style="display:inline-block;margin-top:20px;background:#3b82f6;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;">← Kembali ke ShadowSearch</a>
+      </body></html>
     `);
   }
+});
+
+// ============================================================
+// 404 Handler
+// ============================================================
+app.use((req, res) => {
+  res.status(404).json({ error: 'Endpoint tidak ditemukan' });
+});
+
+// ============================================================
+// Global Error Handler
+// ============================================================
+app.use((err, req, res, next) => {
+  console.error('Server error:', err.message);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // Start Server
 app.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🔒 ShadowSearch Pro / Advanced Stealth Server Active!`);
-  console.log(`🌐 Open in browser: http://localhost:${PORT}`);
+  console.log(`🔒 ShadowSearch Pro — Secured & Hardened Server`);
+  console.log(`🌐 http://localhost:${PORT}`);
   console.log(`====================================================`);
 });
