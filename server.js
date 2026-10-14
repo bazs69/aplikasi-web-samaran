@@ -107,6 +107,87 @@ function decodeBingUrl(url) {
 }
 
 // ============================================================
+// AD BLOCKER — Domain Blocklist (100+ Ad Networks)
+// ============================================================
+const AD_DOMAINS = [
+  // Google Ads
+  'doubleclick.net','googlesyndication.com','googleadservices.com','googletagservices.com',
+  'adwords.google.com','pagead2.googlesyndication.com',
+  // Facebook / Meta Ads
+  'facebook.net','connect.facebook.net','adnxs.com',
+  // Major Ad Networks
+  'taboola.com','outbrain.com','revcontent.com','mgid.com','content.ad',
+  'zergnet.com','disqus.com','criteo.com','rubiconproject.com','openx.net',
+  'pubmatic.com','casalemedia.com','advertising.com','media.net','yieldmo.com',
+  'adsymptotic.com','servedby.flashtalking.com','moatads.com','scorecardresearch.com',
+  'quantserve.com','comscore.com','adsafeprotected.com','lijit.com','springserve.com',
+  'sharethrough.com','sovrn.com','indexww.com','appnexus.com','33across.com',
+  'adsrvr.org','bidswitch.net','contextweb.com','adtelligent.com','undertone.com',
+  'yimg.com','ymads.com','bluekai.com','addthis.com','sharethis.com',
+  // Analytics / Trackers
+  'google-analytics.com','googletagmanager.com','analytics.google.com',
+  'hotjar.com','segment.com','mixpanel.com','amplitude.com','heap.io',
+  'fullstory.com','logrocket.com','mouseflow.com','clicktale.com',
+  'omtrdc.net','2mdn.net','chartbeat.com','parsely.com','krux.com',
+  // Pop-up / Push Notification
+  'onesignal.com','pushwoosh.com','aimtell.com','webpushr.com','vwo.com',
+  // CDN-based Ads
+  'ads.yahoo.com','ads.twitter.com','ads.linkedin.com','bing.com/aclk',
+  // Indonesia-specific Ads
+  'iklanku.com','adf.ly','adcash.com','propellerads.com','popcash.net',
+  'trafficjunky.com','juicyads.com','exoclick.com','ero-advertising.com',
+  'etahub.com','adsterra.com','hilltopads.net','traffic-media.co','clickadu.com'
+];
+
+function isAdDomain(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return AD_DOMAINS.some(domain => host === domain || host.endsWith('.' + domain));
+  } catch { return false; }
+}
+
+// CSS Selectors to remove from proxied pages (common ad containers)
+const AD_CSS_SELECTORS = [
+  // Generic Ad Classes
+  '[class*="-ad-"]','[class*="_ad_"]','[class*="advert"]','[class*="advertisement"]',
+  '[class*="ad-container"]','[class*="ad-wrapper"]','[class*="ad-slot"]',
+  '[class*="ad-unit"]','[class*="adsbygoogle"]','[class*="adsense"]',
+  '[id*="google_ads"]','[id*="div-gpt-ad"]','[id*="ad-container"]',
+  '[id*="ad-slot"]','[id*="advertisement"]','[id*="banner-ad"]',
+  // Specific Ad Tags
+  'ins.adsbygoogle','#carbonads','.carbonad','[data-ad]','[data-ad-unit]',
+  // Social share / push notifications
+  '.social-share-sticky','#onesignal-bell-container','#push-notifications-widget',
+  // Taboola / Outbrain
+  '[id*="taboola"]','[class*="taboola"]','[id*="outbrain"]','[class*="outbrain"]',
+  // Popup / Overlay Ads
+  '[class*="popup-overlay"]','[class*="modal-ad"]','[id*="popup-ad"]',
+  '[class*="sticky-ad"]','[class*="fixed-banner"]','[class*="interstitial"]',
+  // Video Ads
+  '[class*="video-ad"]','[id*="video-ad"]','[class*="preroll"]',
+  // Native Ads
+  '[class*="native-ad"]','[class*="sponsored-content"]','[class*="promoted"]',
+  '.sponsored','[data-sponsored]','[aria-label*="advertisement"]','[aria-label*="Ad"]'
+].join(',');
+
+// Injected CSS to hide ad elements that survive JS removal
+const AD_BLOCK_CSS = `
+  ins.adsbygoogle, .adsbygoogle, [class*="advert"], [class*="advertisement"],
+  [id*="google_ads"], [id*="div-gpt-ad"], [class*="taboola"], [class*="outbrain"],
+  iframe[src*="doubleclick"], iframe[src*="googlesyndication"],
+  iframe[src*="adnxs"], iframe[src*="taboola"], iframe[src*="outbrain"],
+  [class*="sticky-ad"], [class*="fixed-ad"], [class*="ad-sticky"],
+  #carbonads, .carbonad, [data-ad-unit], [data-ad-slot] {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    width: 0 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+  }
+`;
+
+// ============================================================
 // HELPER: Rewrite ALL links inside proxied page to stay on proxy
 // This fixes the "link going to real website" bug
 // ============================================================
@@ -175,8 +256,44 @@ function rewriteAllLinksToProxy(html, baseUrl) {
     }
   });
 
-  // Remove tracking scripts
-  $('script[src*="analytics"], script[src*="gtag"], script[src*="facebook"], script[src*="doubleclick"]').remove();
+  // ---- AD BLOCKER STEP 1: Remove ad/tracker scripts by domain ----
+  $('script[src], iframe[src]').each((_, el) => {
+    const src = $(el).attr('src') || '';
+    if (src && isAdDomain(src)) {
+      $(el).remove();
+    }
+  });
+
+  // Also remove by known keyword patterns
+  $('script').each((_, el) => {
+    const src = $(el).attr('src') || '';
+    const badPatterns = [
+      'analytics','gtag','google-analytics','googletagmanager',
+      'doubleclick','googlesyndication','adsbygoogle','adwords',
+      'facebook.net','hotjar','taboola','outbrain','adnxs','criteo',
+      'quantserve','scorecardresearch','chartbeat','parsely',
+      'onesignal','moatads','adtelligent','adsrvr'
+    ];
+    if (badPatterns.some(p => src.toLowerCase().includes(p))) {
+      $(el).remove();
+    }
+  });
+
+  // ---- AD BLOCKER STEP 2: Remove ad iframes by domain ----
+  $('iframe').each((_, el) => {
+    const src = $(el).attr('src') || '';
+    if (src && (isAdDomain(src) || src.includes('doubleclick') || src.includes('googlesyndication') || src.includes('adnxs'))) {
+      $(el).remove();
+    }
+  });
+
+  // ---- AD BLOCKER STEP 3: Remove known ad HTML elements by CSS selectors ----
+  try {
+    $(AD_CSS_SELECTORS).remove();
+  } catch (e) {}
+
+  // ---- AD BLOCKER STEP 4: Inject CSS to hide surviving ad containers ----
+  $('head').append(`<style id="shadowsearch-adblock">${AD_BLOCK_CSS}</style>`);
 
   return $;
 }
