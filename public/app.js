@@ -45,6 +45,91 @@ document.addEventListener('DOMContentLoaded', () => {
   let isVaultUnlocked = false;
   let isDecoyUnlocked = false;
 
+  // -----------------------------------------------------------
+  // SESSION TIMEOUT AUTO-LOCK
+  // Otomatis kunci Vault & aktifkan Panic Mode jika tidak aktif
+  // -----------------------------------------------------------
+  const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // Default: 5 menit
+  let sessionTimer = null;
+  let sessionWarningTimer = null;
+
+  function resetSessionTimer() {
+    clearTimeout(sessionTimer);
+    clearTimeout(sessionWarningTimer);
+
+    // Peringatan 30 detik sebelum dikunci
+    sessionWarningTimer = setTimeout(() => {
+      if (isVaultUnlocked || isDecoyUnlocked) {
+        showSessionWarning();
+      }
+    }, SESSION_TIMEOUT_MS - 30000);
+
+    // Kunci otomatis saat timeout
+    sessionTimer = setTimeout(() => {
+      lockSession();
+    }, SESSION_TIMEOUT_MS);
+  }
+
+  function lockSession() {
+    // Kunci vault
+    isVaultUnlocked = false;
+    isDecoyUnlocked = false;
+    document.getElementById('vault-status-label').textContent = 'Vault';
+
+    // Tutup semua modal
+    vaultModal.classList.add('hidden');
+    historyModal.classList.add('hidden');
+
+    // Aktifkan Panic Mode
+    activatePanic();
+
+    // Hapus peringatan jika masih ada
+    const warn = document.getElementById('session-warning-toast');
+    if (warn) warn.remove();
+  }
+
+  function showSessionWarning() {
+    // Jangan tampilkan jika Panic Mode sudah aktif
+    if (!panicOverlay.classList.contains('hidden')) return;
+
+    const existing = document.getElementById('session-warning-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'session-warning-toast';
+    toast.innerHTML = `
+      <div style="
+        position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:99998;
+        background:rgba(220,38,38,0.95); color:#fff; padding:12px 22px;
+        border-radius:10px; font-size:13px; font-family:system-ui,sans-serif;
+        box-shadow:0 4px 20px rgba(0,0,0,0.6); text-align:center;
+        border:1px solid rgba(255,255,255,0.2); backdrop-filter:blur(8px);
+      ">
+        ⚠️ <strong>Sesi akan dikunci dalam 30 detik!</strong><br>
+        <span style="font-size:11px;opacity:0.85;">Gerakkan mouse atau sentuh layar untuk tetap aktif.</span>
+      </div>
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 28000);
+  }
+
+  // Mulai timer dan reset saat ada aktivitas pengguna
+  const ACTIVITY_EVENTS = ['mousemove','keydown','click','touchstart','scroll'];
+  ACTIVITY_EVENTS.forEach(event => {
+    document.addEventListener(event, resetSessionTimer, { passive: true });
+  });
+  resetSessionTimer(); // Mulai timer saat halaman dibuka
+
+  // -----------------------------------------------------------
+  // AUTO PANIC SAAT LAYAR TIDAK TERLIHAT (Ganti Tab / Alt+Tab)
+  // -----------------------------------------------------------
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      // Layar disembunyikan: aktifkan Panic Mode otomatis
+      activatePanic();
+    }
+  });
+
   // Fake Decoy History for Decoy PIN (9999)
   const DECOY_HISTORY = [
     { query: "Resep Cara Membuat Nasi Goreng Spesial Enak", time: "10:15 AM" },
@@ -549,4 +634,13 @@ document.addEventListener('DOMContentLoaded', () => {
       "'": '&#039;'
     })[m]);
   }
+
+  // Reset session timer saat Panic Mode dinonaktifkan
+  const _origDeactivatePanic = deactivatePanic;
+  function deactivatePanicAndReset() {
+    _origDeactivatePanic();
+    resetSessionTimer();
+  }
+  btnExitPanic.removeEventListener('click', deactivatePanic);
+  btnExitPanic.addEventListener('click', deactivatePanicAndReset);
 });
