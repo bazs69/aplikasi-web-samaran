@@ -100,12 +100,121 @@
           <button class="engine-chip" data-engine="images">🖼️ Gambar</button>
           <button class="engine-chip" data-engine="videos">🎬 Video</button>
           <button class="engine-chip" data-engine="wikipedia">📚 Wiki</button>
+          <button class="engine-chip video-boost-chip" id="btn-video-boost" data-engine="videoboost">🚀 Video Boost</button>
         </div>
         <label class="switch-label">
           <input type="checkbox" id="toggle-proxy-mode" checked>
           <span class="slider round"></span>
-          <span class="switch-text">Paksa Proxy 🛡️</span>
+          <span class="switch-text">Proxy 🛡️</span>
         </label>
+      </div>
+    </section>
+
+    <!-- ===== VIDEO BOOST PANEL ===== -->
+    <section id="video-boost-panel" class="video-boost-panel hidden">
+      <div class="vb-header">
+        <div class="vb-title">
+          <span class="vb-icon">🚀</span>
+          <div>
+            <h2>Video Boost Mode</h2>
+            <p>Streaming video dengan koneksi teroptimasi & tanpa iklan</p>
+          </div>
+        </div>
+        <div class="vb-speed-badge" id="vb-speed-badge">
+          <span class="speed-dot"></span>
+          <span id="vb-speed-text">Mengukur kecepatan...</span>
+        </div>
+      </div>
+
+      <!-- URL Input -->
+      <div class="vb-input-group">
+        <div class="vb-url-bar">
+          <span class="vb-url-icon">🔗</span>
+          <input type="url" id="vb-url-input" placeholder="Tempel URL video atau situs (contoh: https://youtube.com/watch?v=...)" autocomplete="off"/>
+          <button id="vb-btn-stream" class="vb-btn-stream">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Stream
+          </button>
+        </div>
+      </div>
+
+      <!-- Quality + Options -->
+      <div class="vb-options">
+        <div class="vb-option-group">
+          <label class="vb-label">🎬 Kualitas</label>
+          <div class="vb-chips">
+            <button class="vb-chip active" data-quality="auto">🤖 Auto</button>
+            <button class="vb-chip" data-quality="1080">1080p HD</button>
+            <button class="vb-chip" data-quality="720">720p</button>
+            <button class="vb-chip" data-quality="480">480p</button>
+            <button class="vb-chip" data-quality="360">360p Hemat</button>
+          </div>
+        </div>
+
+        <div class="vb-toggles">
+          <label class="vb-toggle-item">
+            <input type="checkbox" id="vb-adblock" checked>
+            <span class="vb-toggle-slider"></span>
+            <span>Blokir Iklan Video</span>
+          </label>
+          <label class="vb-toggle-item">
+            <input type="checkbox" id="vb-turbo" checked>
+            <span class="vb-toggle-slider"></span>
+            <span>Turbo Buffer ⚡</span>
+          </label>
+          <label class="vb-toggle-item">
+            <input type="checkbox" id="vb-compress">
+            <span class="vb-toggle-slider"></span>
+            <span>Hemat Data</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Stats Bar -->
+      <div class="vb-stats" id="vb-stats">
+        <div class="vb-stat-item">
+          <span class="vb-stat-label">📶 Kecepatan Download</span>
+          <span class="vb-stat-value" id="stat-speed">—</span>
+        </div>
+        <div class="vb-stat-item">
+          <span class="vb-stat-label">⏱️ Latency</span>
+          <span class="vb-stat-value" id="stat-latency">—</span>
+        </div>
+        <div class="vb-stat-item">
+          <span class="vb-stat-label">🎯 Status</span>
+          <span class="vb-stat-value" id="stat-status">Siap</span>
+        </div>
+        <div class="vb-stat-item">
+          <span class="vb-stat-label">🚫 Iklan Diblokir</span>
+          <span class="vb-stat-value" id="stat-ads">0</span>
+        </div>
+      </div>
+
+      <!-- Video Player Area -->
+      <div id="vb-player-area" class="vb-player-area hidden">
+        <div class="vb-player-header">
+          <span id="vb-player-title">Video Stream</span>
+          <button id="vb-btn-close-player" class="vb-btn-close">✕ Tutup</button>
+        </div>
+        <iframe id="vb-iframe" class="vb-iframe" allowfullscreen allow="autoplay; fullscreen"></iframe>
+        <div class="vb-player-controls">
+          <button onclick="document.getElementById('vb-iframe').requestFullscreen()" class="vb-ctrl-btn">⛶ Fullscreen</button>
+          <button id="vb-btn-reload-stream" class="vb-ctrl-btn">🔄 Reload</button>
+          <button onclick="document.getElementById('vb-player-area').classList.add('hidden')" class="vb-ctrl-btn">✕ Keluar</button>
+        </div>
+      </div>
+
+      <!-- Quick Video Sites -->
+      <div class="vb-quick-sites">
+        <p class="vb-quick-label">🎯 Buka via Video Boost:</p>
+        <div class="vb-site-chips">
+          <div class="vb-site-chip" data-url="https://www.youtube.com">▶ YouTube</div>
+          <div class="vb-site-chip" data-url="https://vimeo.com">🎬 Vimeo</div>
+          <div class="vb-site-chip" data-url="https://anichin.moe">🎌 Anichin</div>
+          <div class="vb-site-chip" data-url="https://anoboy.app">🎌 Anoboy</div>
+          <div class="vb-site-chip" data-url="https://www.bilibili.com">📺 Bilibili</div>
+          <div class="vb-site-chip" data-url="https://www.dailymotion.com">🎥 Dailymotion</div>
+        </div>
       </div>
     </section>
 
