@@ -212,28 +212,54 @@ const AD_BLOCK_CSS = `
 
 // ============================================================
 // HELPER: Rewrite ALL links inside proxied page to stay on proxy
+// ============================================================
+// HELPER: Rewrite ALL links inside proxied page to stay on proxy
 // This fixes the "link going to real website" bug
 // ============================================================
 function rewriteAllLinksToProxy(html, baseUrl, isEmbedded = false) {
   const $ = cheerio.load(html);
+
+  // Hapus tag <base> bawaan situs agar browser tidak mengarahkan /api/proxy ke domain asli
+  $('base').remove();
 
   // Hapus meta frame-busting dan CSP yang membatasi embedding iframe
   $('meta[http-equiv="X-Frame-Options" i]').remove();
   $('meta[http-equiv="Content-Security-Policy" i]').remove();
   $('meta[http-equiv="Frame-Options" i]').remove();
 
-  // Rewrite <a href>
+  // Ubah semua <link href> (CSS / stylesheet / favicon) ke URL absolut asli
+  $('link[href]').each((_, el) => {
+    const href = $(el).attr('href');
+    if (href && !href.startsWith('data:') && !href.startsWith('blob:') && !href.startsWith('javascript:')) {
+      try {
+        $(el).attr('href', new URL(href, baseUrl).href);
+      } catch (e) {}
+    }
+  });
+
+  // Ubah semua <script src> ke URL absolut asli
+  $('script[src]').each((_, el) => {
+    const src = $(el).attr('src');
+    if (src && !src.startsWith('data:') && !src.startsWith('blob:') && !isAdDomain(src)) {
+      try {
+        $(el).attr('src', new URL(src, baseUrl).href);
+      } catch (e) {}
+    }
+  });
+
+  // Rewrite <a href> agar seluruh tautan & episode video tetap berada di proxy
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
-    if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:')) return;
+    if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
     try {
       const fullUrl = new URL(href, baseUrl).href;
-      if (fullUrl.startsWith('http')) {
+      if (fullUrl.startsWith('http://') || fullUrl.startsWith('https://')) {
         let proxyHref = `/api/proxy?url=${encodeURIComponent(fullUrl)}`;
         if (isEmbedded) proxyHref += '&videoboost=1';
         $(el).attr('href', proxyHref);
-        $(el).attr('target', '_self');
-        $(el).removeAttr('rel'); // Remove noopener/noreferrer that could break routing
+        $(el).attr('target', '_self'); // Jangan biarkan membuka tab baru ke situs asli
+        $(el).removeAttr('rel');       // Hapus noopener/noreferrer
+        $(el).removeAttr('onclick');   // Hapus inline popup / window.open
       }
     } catch (e) {}
   });
@@ -241,12 +267,12 @@ function rewriteAllLinksToProxy(html, baseUrl, isEmbedded = false) {
   // Rewrite <form action> to proxy
   $('form[action]').each((_, el) => {
     const action = $(el).attr('action');
-    if (!action) return;
     try {
-      const fullAction = new URL(action, baseUrl).href;
+      const fullAction = action ? new URL(action, baseUrl).href : baseUrl;
       let proxyAction = `/api/proxy?url=${encodeURIComponent(fullAction)}`;
       if (isEmbedded) proxyAction += '&videoboost=1';
       $(el).attr('action', proxyAction);
+      $(el).attr('target', '_self');
     } catch (e) {}
   });
 
@@ -261,7 +287,7 @@ function rewriteAllLinksToProxy(html, baseUrl, isEmbedded = false) {
     }
   });
 
-  // Fix image sources (direct, no proxy needed for images for speed)
+  // Fix image sources to absolute
   $('img[src]').each((_, el) => {
     const src = $(el).attr('src');
     if (src && !src.startsWith('data:')) {
@@ -346,6 +372,79 @@ function rewriteAllLinksToProxy(html, baseUrl, isEmbedded = false) {
 
   // ---- AD BLOCKER STEP 4: Inject CSS to hide surviving ad containers ----
   $('head').append(`<style id="shadowsearch-adblock">${AD_BLOCK_CSS}</style>`);
+
+  // ---- STEALTH INTERCEPTOR GUARD: Kunci semua klik link dinamis & cegah popup keluar situs ----
+  const stealthGuardScript = `
+    <script id="shadowsearch-stealth-guard">
+    (function() {
+      var PROXY_BASE = '/api/proxy?url=';
+      var CURRENT_URL = ${JSON.stringify(baseUrl)};
+      var IS_EMBEDDED = ${isEmbedded ? 'true' : 'false'};
+
+      function toProxy(u) {
+        if (!u || typeof u !== 'string') return u;
+        if (u.startsWith('javascript:') || u.startsWith('mailto:') || u.startsWith('tel:') || u.startsWith('#') || u.startsWith('data:')) return u;
+        if (u.startsWith('/api/proxy')) return u;
+        try {
+          var full = new URL(u, CURRENT_URL).href;
+          if (full.startsWith('http://') || full.startsWith('https://')) {
+            var res = PROXY_BASE + encodeURIComponent(full);
+            if (IS_EMBEDDED) res += '&videoboost=1';
+            return res;
+          }
+        } catch(e) {}
+        return u;
+      }
+
+      // 1. Tangkap seluruh klik link (termasuk kartu video & tombol episode anime yang dirender JavaScript)
+      document.addEventListener('click', function(e) {
+        var target = e.target;
+        while (target && target.tagName !== 'A' && target !== document.body) {
+          target = target.parentElement;
+        }
+        if (!target || target.tagName !== 'A') return;
+
+        var href = target.getAttribute('href');
+        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+
+        // Matikan target="_blank" agar tidak membuka tab baru ke situs asli
+        target.removeAttribute('target');
+
+        if (!href.startsWith('/api/proxy')) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.location.href = toProxy(href);
+        }
+      }, true);
+
+      // 2. Tangkap window.open agar tidak membuka popup ke situs luar
+      var _origOpen = window.open;
+      window.open = function(url) {
+        if (url && typeof url === 'string') {
+          window.location.href = toProxy(url);
+          return window;
+        }
+        return null;
+      };
+
+      // 3. Lindungi dari frame-busting (top.location / parent.location)
+      try {
+        Object.defineProperty(window, 'top', { get: function() { return window; } });
+        Object.defineProperty(window, 'parent', { get: function() { return window; } });
+      } catch(e) {}
+
+      // 4. Kunci form submission ke proxy
+      document.addEventListener('submit', function(e) {
+        var form = e.target;
+        var action = form.getAttribute('action') || CURRENT_URL;
+        if (!action.startsWith('/api/proxy')) {
+          form.setAttribute('action', toProxy(action));
+        }
+      }, true);
+    })();
+    </script>
+  `;
+  $('head').prepend(stealthGuardScript);
 
   return $;
 }
@@ -644,7 +743,6 @@ app.get('/api/proxy', async (req, res) => {
       `;
       $('body').prepend(stealthBanner);
     }
-    $('head').prepend(`<base href="${targetUrl}" />`);
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
