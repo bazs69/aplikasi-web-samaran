@@ -63,18 +63,39 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ============================================================
-// STEALTH HEADERS
+// STEALTH HEADERS — Full Chrome Browser Fingerprint
 // ============================================================
 const DEFAULT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
   'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  'Accept-Encoding': 'gzip, deflate, br',
   'Cookie': 'SRCHHPGUSR=ADLT=OFF; PREF=LD=en-US&ADLT=OFF; NRSLT=20',
   'DNT': '1',
+  'Connection': 'keep-alive',
+  'Upgrade-Insecure-Requests': '1',
   'Sec-Fetch-Dest': 'document',
   'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none'
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Sec-CH-UA': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  'Sec-CH-UA-Mobile': '?0',
+  'Sec-CH-UA-Platform': '"Windows"',
+  'Cache-Control': 'max-age=0'
 };
+
+// Rotasi User-Agent agar tidak mudah di-fingerprint
+const UA_LIST = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+];
+
+function getRandomUA() {
+  return UA_LIST[Math.floor(Math.random() * UA_LIST.length)];
+}
 
 // Blocked domains to prevent SSRF attacks
 const BLOCKED_DOMAINS = [
@@ -511,16 +532,47 @@ app.get('/api/proxy', async (req, res) => {
   if (isBlockedUrl(targetUrl)) return res.status(403).send('URL ini tidak diizinkan.');
 
   try {
-    new URL(targetUrl); // Validate URL format
+    new URL(targetUrl);
   } catch {
     return res.status(400).send('URL tidak valid');
   }
 
-  try {
-    const response = await axios.get(targetUrl, {
-      headers: { ...DEFAULT_HEADERS, 'Referer': targetUrl },
-      timeout: 12000, maxRedirects: 5, responseType: 'text'
+  // Helper: kirim HTML response akhir
+  async function fetchAndRender(headers) {
+    return axios.get(targetUrl, {
+      headers,
+      timeout: 15000,
+      maxRedirects: 8,
+      responseType: 'text',
+      validateStatus: (s) => s < 500 // jangan throw di 4xx
     });
+  }
+
+  try {
+    // === PERCOBAAN 1: Header Chrome standar ===
+    let response = await fetchAndRender({
+      ...DEFAULT_HEADERS,
+      'User-Agent': getRandomUA(),
+      'Referer': new URL(targetUrl).origin,
+      'Origin': new URL(targetUrl).origin
+    });
+
+    // === PERCOBAAN 2: Jika 401/403/429, coba User-Agent berbeda ===
+    if ([401, 403, 429].includes(response.status)) {
+      response = await fetchAndRender({
+        ...DEFAULT_HEADERS,
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+        'Sec-CH-UA-Mobile': '?1',
+        'Sec-CH-UA-Platform': '"iOS"',
+        'Referer': 'https://www.google.com/',
+        'Origin': new URL(targetUrl).origin
+      });
+    }
+
+    // === Jika tetap diblokir, tampilkan halaman fallback cerdas ===
+    if ([401, 403, 407].includes(response.status)) {
+      return res.status(200).send(buildBlockedPage(targetUrl, `Situs memblokir proxy (HTTP ${response.status})`, response.status));
+    }
 
     const contentType = response.headers['content-type'] || 'text/html';
 
@@ -529,10 +581,9 @@ app.get('/api/proxy', async (req, res) => {
       return res.send(response.data);
     }
 
-    // === FULL LINK REWRITE via helper ===
+    // === FULL LINK REWRITE ===
     const $ = rewriteAllLinksToProxy(response.data, targetUrl);
 
-    // Inject stealth banner
     const stealthBanner = `
       <div id="shadowsearch-bar" style="
         position:fixed;top:0;left:0;right:0;z-index:999999;
@@ -544,18 +595,16 @@ app.get('/api/proxy', async (req, res) => {
       ">
         <div style="display:flex;align-items:center;gap:10px;min-width:0;">
           <span style="background:#10b981;color:#000;padding:2px 7px;border-radius:4px;font-weight:800;font-size:10px;white-space:nowrap;">🛡️ PROXIED</span>
-          <span style="color:#94a3b8;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;">${targetUrl}</span>
+          <span style="color:#94a3b8;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">${new URL(targetUrl).hostname}</span>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0;">
-          <button onclick="window.history.back()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;">← Kembali</button>
-          <a href="/" style="background:#3b82f6;color:#fff;padding:5px 12px;border-radius:6px;text-decoration:none;font-size:12px;">🔍 ShadowSearch</a>
+          <button onclick="window.history.back()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">← Kembali</button>
+          <a href="/" style="background:#3b82f6;color:#fff;padding:5px 10px;border-radius:6px;text-decoration:none;font-size:12px;">🔍 Home</a>
         </div>
       </div>
       <div style="height:44px;"></div>
     `;
     $('body').prepend(stealthBanner);
-
-    // Base tag to help resolve relative resources on proxied page
     $('head').prepend(`<base href="${targetUrl}" />`);
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -563,16 +612,64 @@ app.get('/api/proxy', async (req, res) => {
     res.send($.html());
 
   } catch (err) {
-    res.status(500).send(`
-      <html><body style="font-family:sans-serif;padding:40px;text-align:center;color:#ef4444;background:#0f172a;min-height:100vh;">
-        <h2>⚠️ Gagal Memuat Halaman via Proxy</h2>
-        <p style="color:#94a3b8;">Halaman (${targetUrl}) memblokir proxy atau sedang offline.</p>
-        <p style="font-size:12px;color:#64748b;">${err.message}</p>
-        <a href="/" style="display:inline-block;margin-top:20px;background:#3b82f6;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;">← Kembali ke ShadowSearch</a>
-      </body></html>
-    `);
+    res.status(200).send(buildBlockedPage(targetUrl, err.message, 0));
   }
 });
+
+// ============================================================
+// SMART FALLBACK PAGE — Tampil saat situs blokir proxy
+// ============================================================
+function buildBlockedPage(targetUrl, reason, statusCode) {
+  const hostname = (() => { try { return new URL(targetUrl).hostname; } catch { return targetUrl; } })();
+  const isCloudflare = reason.toLowerCase().includes('403') || reason.toLowerCase().includes('401') || reason.toLowerCase().includes('challenge');
+
+  return `<!DOCTYPE html>
+  <html lang="id">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tidak Bisa Diproxy — ShadowSearch</title>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{background:#070a12;color:#f8fafc;font-family:system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;}
+      .icon{font-size:56px;margin-bottom:16px;}
+      h2{font-size:22px;margin-bottom:10px;color:#fbbf24;}
+      .desc{color:#94a3b8;font-size:14px;line-height:1.6;max-width:480px;margin-bottom:24px;}
+      .code{background:rgba(255,255,255,0.05);padding:8px 14px;border-radius:8px;font-family:monospace;font-size:12px;color:#64748b;margin-bottom:24px;word-break:break-all;}
+      .tip{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.25);border-radius:10px;padding:14px 18px;color:#fcd34d;font-size:13px;line-height:1.6;max-width:480px;margin-bottom:28px;text-align:left;}
+      .tip strong{display:block;margin-bottom:6px;font-size:14px;}
+      .actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}
+      .btn{padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;cursor:pointer;border:none;transition:all 0.2s;}
+      .btn-primary{background:#3b82f6;color:#fff;}
+      .btn-primary:hover{background:#2563eb;}
+      .btn-warning{background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.4);color:#fbbf24;}
+      .btn-warning:hover{background:rgba(251,191,36,0.3);}
+      .btn-back{background:rgba(255,255,255,0.07);color:#94a3b8;border:1px solid rgba(255,255,255,0.1);}
+      .btn-back:hover{color:#fff;}
+    </style>
+  </head>
+  <body>
+    <div class="icon">🚧</div>
+    <h2>Situs Ini Memblokir Proxy</h2>
+    <p class="desc">
+      <strong>${hostname}</strong> menggunakan sistem keamanan (seperti Cloudflare) yang mendeteksi dan menolak koneksi dari server proxy.
+    </p>
+    <div class="code">${reason}</div>
+    ${isCloudflare ? `
+    <div class="tip">
+      <strong>💡 Kenapa ini terjadi?</strong>
+      Situs seperti <em>anichin.moe</em>, Cloudflare-protected sites, atau situs streaming biasanya memblokir IP datacenter (server Render). Ini di luar kemampuan proxy standar.
+      <br><br>
+      <strong>✅ Solusi:</strong> Buka situs langsung di tab baru. Traffic Anda tetap terenkripsi HTTPS — pemilik WiFi hanya tahu Anda mengakses <em>${hostname}</em>, bukan halaman spesifik yang dibuka.
+    </div>` : ''}
+    <div class="actions">
+      <a href="${targetUrl}" target="_blank" rel="noopener" class="btn btn-warning">🔗 Buka Langsung (Tab Baru)</a>
+      <a href="javascript:history.back()" class="btn btn-back">← Kembali</a>
+      <a href="/" class="btn btn-primary">🔍 Kembali ke ShadowSearch</a>
+    </div>
+  </body>
+  </html>`;
+}
 
 // ============================================================
 // 404 Handler
