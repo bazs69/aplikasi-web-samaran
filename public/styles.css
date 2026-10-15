@@ -1280,9 +1280,64 @@ kbd {
   cursor: pointer;
 }
 
+.vb-btn-ext {
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-decoration: none;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+
+.vb-btn-ext:hover {
+  background: rgba(251, 191, 36, 0.3);
+  color: #fff;
+}
+
+.vb-iframe-wrapper {
+  position: relative;
+  width: 100%;
+  background: #000;
+}
+
+.vb-loading-bar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(7, 10, 18, 0.92);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  padding: 8px 16px;
+  border-radius: 20px;
+  color: #fbbf24;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 10;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.8);
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+.vb-spinner-mini {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(251, 191, 36, 0.3);
+  border-top-color: #fbbf24;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 .vb-iframe {
   width: 100%;
-  height: 420px;
+  height: 440px;
   border: none;
   display: block;
   background: #000;
@@ -1292,7 +1347,8 @@ kbd {
   display: flex;
   gap: 8px;
   padding: 10px 14px;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0,0,0,0.6);
+  flex-wrap: wrap;
 }
 
 .vb-ctrl-btn {
@@ -1304,9 +1360,39 @@ kbd {
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .vb-ctrl-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+.vb-ctrl-direct {
+  text-decoration: none;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.vb-ctrl-direct:hover {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fff;
+}
+
+.vb-player-notice {
+  padding: 8px 14px;
+  background: rgba(251, 191, 36, 0.05);
+  border-top: 1px solid rgba(251, 191, 36, 0.12);
+  font-size: 12px;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vb-player-notice strong {
+  color: #fbbf24;
+}
 
 /* Quick Sites */
 .vb-quick-sites { margin-top: 4px; }

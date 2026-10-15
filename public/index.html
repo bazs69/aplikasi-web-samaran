@@ -194,13 +194,26 @@
       <div id="vb-player-area" class="vb-player-area hidden">
         <div class="vb-player-header">
           <span id="vb-player-title">Video Stream</span>
-          <button id="vb-btn-close-player" class="vb-btn-close">✕ Tutup</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <a id="vb-btn-external" href="#" target="_blank" rel="noopener noreferrer" class="vb-btn-ext" title="Buka di Tab Baru jika video terkendala">↗ Tab Baru</a>
+            <button id="vb-btn-close-player" class="vb-btn-close">✕ Tutup</button>
+          </div>
         </div>
-        <iframe id="vb-iframe" class="vb-iframe" allowfullscreen allow="autoplay; fullscreen"></iframe>
+        <div class="vb-iframe-wrapper">
+          <div id="vb-loading-bar" class="vb-loading-bar hidden">
+            <div class="vb-spinner-mini"></div>
+            <span>Menghubungkan via Stealth Proxy...</span>
+          </div>
+          <iframe id="vb-iframe" class="vb-iframe" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
+        </div>
         <div class="vb-player-controls">
           <button onclick="document.getElementById('vb-iframe').requestFullscreen()" class="vb-ctrl-btn">⛶ Fullscreen</button>
           <button id="vb-btn-reload-stream" class="vb-ctrl-btn">🔄 Reload</button>
+          <a id="vb-btn-direct-link" href="#" target="_blank" rel="noopener noreferrer" class="vb-ctrl-btn vb-ctrl-direct">↗ Buka di Tab Baru</a>
           <button onclick="document.getElementById('vb-player-area').classList.add('hidden')" class="vb-ctrl-btn">✕ Keluar</button>
+        </div>
+        <div class="vb-player-notice">
+          💡 <span>Jika video tidak muncul karena proteksi Cloudflare situs, klik <strong>Buka di Tab Baru</strong>.</span>
         </div>
       </div>
 

@@ -656,6 +656,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const vbPlayerTitle    = document.getElementById('vb-player-title');
   const vbBtnClosePlayer = document.getElementById('vb-btn-close-player');
   const vbBtnReload      = document.getElementById('vb-btn-reload-stream');
+  const vbBtnExternal    = document.getElementById('vb-btn-external');
+  const vbBtnDirectLink  = document.getElementById('vb-btn-direct-link');
+  const vbLoadingBar     = document.getElementById('vb-loading-bar');
   const vbSpeedText      = document.getElementById('vb-speed-text');
   const statSpeed        = document.getElementById('stat-speed');
   const statLatency      = document.getElementById('stat-latency');
@@ -733,30 +736,102 @@ document.addEventListener('DOMContentLoaded', () => {
   vbBtnStream.addEventListener('click', () => { const r = vbUrlInput.value.trim(); if (r) startStream(r.startsWith('http') ? r : 'https://' + r); });
   vbUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') vbBtnStream.click(); });
 
+  // Deteksi URL embed resmi untuk platform video populer (YouTube, Vimeo, Dailymotion)
+  function getEmbedUrl(rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      if (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) {
+        let vid = '';
+        if (u.hostname.includes('youtu.be')) {
+          vid = u.pathname.slice(1).split('?')[0];
+        } else if (u.searchParams.has('v')) {
+          vid = u.searchParams.get('v');
+        } else if (u.pathname.includes('/embed/')) {
+          vid = u.pathname.split('/embed/')[1].split('?')[0];
+        }
+        if (vid) return `https://www.youtube-nocookie.com/embed/${vid}?autoplay=1&rel=0`;
+      }
+      if (u.hostname.includes('vimeo.com')) {
+        const m = u.pathname.match(/\/(\d+)/);
+        if (m && m[1]) return `https://player.vimeo.com/video/${m[1]}?autoplay=1`;
+      }
+      if (u.hostname.includes('dailymotion.com')) {
+        const m = u.pathname.match(/\/video\/([a-zA-Z0-9]+)/);
+        if (m && m[1]) return `https://www.dailymotion.com/embed/video/${m[1]}?autoplay=1`;
+      }
+    } catch (e) {}
+    return null;
+  }
+
   function startStream(url) {
-    vbCurrentUrl = url; statStatus.textContent = 'Memuat...';
+    vbCurrentUrl = url;
+    statStatus.textContent = 'Memuat...';
+
+    // Perbarui link tombol tab baru
+    if (vbBtnExternal) vbBtnExternal.href = url;
+    if (vbBtnDirectLink) vbBtnDirectLink.href = url;
+
+    // Tampilkan loading bar
+    if (vbLoadingBar) vbLoadingBar.classList.remove('hidden');
+
     const turbo = document.getElementById('vb-turbo')?.checked;
     const adblk = document.getElementById('vb-adblock')?.checked;
     const cmprs = document.getElementById('vb-compress')?.checked;
-    let proxyUrl = '/api/proxy?url=' + encodeURIComponent(url);
-    if (turbo) proxyUrl += '&turbo=1';
-    if (adblk) proxyUrl += '&adblock=1';
-    if (cmprs) proxyUrl += '&compress=1';
-    if (vbSelectedQuality !== 'auto') proxyUrl += '&quality=' + vbSelectedQuality;
+
+    // Preconnect untuk percepat DNS & TLS handshake
     try {
       const orig = new URL(url).origin;
       if (!document.querySelector('link[href="' + orig + '"]')) {
-        const el = document.createElement('link'); el.rel = 'preconnect'; el.href = orig; document.head.appendChild(el);
+        const el = document.createElement('link');
+        el.rel = 'preconnect';
+        el.href = orig;
+        document.head.appendChild(el);
       }
     } catch {}
-    try { vbPlayerTitle.textContent = new URL(url).hostname; } catch { vbPlayerTitle.textContent = 'Video Boost Stream'; }
-    vbIframe.src = proxyUrl;
+
+    try {
+      vbPlayerTitle.textContent = new URL(url).hostname;
+    } catch {
+      vbPlayerTitle.textContent = 'Video Stream';
+    }
+
+    // Periksa apakah ada embed URL resmi (seperti video YouTube/Vimeo)
+    const officialEmbed = getEmbedUrl(url);
+    if (officialEmbed) {
+      vbIframe.src = officialEmbed;
+    } else {
+      let proxyUrl = '/api/proxy?url=' + encodeURIComponent(url) + '&videoboost=1';
+      if (turbo) proxyUrl += '&turbo=1';
+      if (adblk) proxyUrl += '&adblock=1';
+      if (cmprs) proxyUrl += '&compress=1';
+      if (vbSelectedQuality !== 'auto') proxyUrl += '&quality=' + vbSelectedQuality;
+      vbIframe.src = proxyUrl;
+    }
+
+    vbIframe.onload = () => {
+      if (vbLoadingBar) vbLoadingBar.classList.add('hidden');
+      statStatus.textContent = turbo ? '⚡ Turbo Stream Aktif' : '▶ Streaming Aktif';
+    };
+
+    // Sembunyikan loading bar otomatis setelah 6 detik jika onload lambat
+    setTimeout(() => {
+      if (vbLoadingBar) vbLoadingBar.classList.add('hidden');
+    }, 6000);
+
     vbPlayerArea.classList.remove('hidden');
-    if (adblk) { vbAdsBlocked += Math.floor(Math.random()*4)+2; statAds.textContent = vbAdsBlocked; }
-    statStatus.textContent = turbo ? 'Turbo Streaming' : 'Streaming';
+    if (adblk) {
+      vbAdsBlocked += Math.floor(Math.random() * 4) + 2;
+      statAds.textContent = vbAdsBlocked;
+    }
+
     setTimeout(() => vbPlayerArea.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
   }
 
   vbBtnReload.addEventListener('click', () => { if (vbCurrentUrl) startStream(vbCurrentUrl); });
-  vbBtnClosePlayer.addEventListener('click', () => { vbPlayerArea.classList.add('hidden'); vbIframe.src = ''; statStatus.textContent = 'Siap'; });
+  vbBtnClosePlayer.addEventListener('click', () => {
+    vbPlayerArea.classList.add('hidden');
+    vbIframe.src = '';
+    statStatus.textContent = 'Siap';
+    if (vbLoadingBar) vbLoadingBar.classList.add('hidden');
+  });
 });

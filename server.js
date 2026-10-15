@@ -18,7 +18,8 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet({
   contentSecurityPolicy: false, // Disabled so proxied pages load normally
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: false
+  crossOriginResourcePolicy: false,
+  frameguard: false // Managed manually below to allow SAMEORIGIN for Video Boost iframe
 }));
 
 // 2. Rate Limiting — Blokir otomatis jika ada terlalu banyak request (anti-bruteforce/DDoS)
@@ -33,7 +34,7 @@ const limiter = rateLimit({
 // Strictest limit untuk proxy agar tidak disalahgunakan
 const proxyLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 30,
+  max: 60,              // Dinaikkan ke 60 agar streaming video & navigasi iframe lancar
   message: { error: 'Proxy rate limit. Coba lagi dalam 1 menit.' }
 });
 
@@ -45,7 +46,8 @@ app.use('/api/media-proxy', proxyLimiter);
 app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
+  // SAMEORIGIN mengizinkan pemutar iframe Video Boost di aplikasi sendiri berjalan lancar
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
   next();
@@ -212,8 +214,13 @@ const AD_BLOCK_CSS = `
 // HELPER: Rewrite ALL links inside proxied page to stay on proxy
 // This fixes the "link going to real website" bug
 // ============================================================
-function rewriteAllLinksToProxy(html, baseUrl) {
+function rewriteAllLinksToProxy(html, baseUrl, isEmbedded = false) {
   const $ = cheerio.load(html);
+
+  // Hapus meta frame-busting dan CSP yang membatasi embedding iframe
+  $('meta[http-equiv="X-Frame-Options" i]').remove();
+  $('meta[http-equiv="Content-Security-Policy" i]').remove();
+  $('meta[http-equiv="Frame-Options" i]').remove();
 
   // Rewrite <a href>
   $('a[href]').each((_, el) => {
@@ -222,7 +229,9 @@ function rewriteAllLinksToProxy(html, baseUrl) {
     try {
       const fullUrl = new URL(href, baseUrl).href;
       if (fullUrl.startsWith('http')) {
-        $(el).attr('href', `/api/proxy?url=${encodeURIComponent(fullUrl)}`);
+        let proxyHref = `/api/proxy?url=${encodeURIComponent(fullUrl)}`;
+        if (isEmbedded) proxyHref += '&videoboost=1';
+        $(el).attr('href', proxyHref);
         $(el).attr('target', '_self');
         $(el).removeAttr('rel'); // Remove noopener/noreferrer that could break routing
       }
@@ -235,7 +244,9 @@ function rewriteAllLinksToProxy(html, baseUrl) {
     if (!action) return;
     try {
       const fullAction = new URL(action, baseUrl).href;
-      $(el).attr('action', `/api/proxy?url=${encodeURIComponent(fullAction)}`);
+      let proxyAction = `/api/proxy?url=${encodeURIComponent(fullAction)}`;
+      if (isEmbedded) proxyAction += '&videoboost=1';
+      $(el).attr('action', proxyAction);
     } catch (e) {}
   });
 
@@ -297,6 +308,20 @@ function rewriteAllLinksToProxy(html, baseUrl) {
     ];
     if (badPatterns.some(p => src.toLowerCase().includes(p))) {
       $(el).remove();
+      return;
+    }
+
+    // Netralkan frame-busting scripts (misal: if (top !== self) top.location = self.location)
+    let inlineJs = $(el).html() || '';
+    if (inlineJs && (inlineJs.includes('top.location') || inlineJs.includes('window.top') || inlineJs.includes('self.location'))) {
+      inlineJs = inlineJs
+        .replace(/top\.location/g, 'window._fakeTop')
+        .replace(/window\.top/g, 'window._fakeTop')
+        .replace(/top\s*!==\s*self/g, 'false')
+        .replace(/top\s*!=\s*self/g, 'false')
+        .replace(/self\s*!==\s*top/g, 'false')
+        .replace(/self\s*!=\s*top/g, 'false');
+      $(el).html(inlineJs);
     }
   });
 
@@ -305,6 +330,12 @@ function rewriteAllLinksToProxy(html, baseUrl) {
     const src = $(el).attr('src') || '';
     if (src && (isAdDomain(src) || src.includes('doubleclick') || src.includes('googlesyndication') || src.includes('adnxs'))) {
       $(el).remove();
+    } else if (src) {
+      // Pastikan iframe pemutar video yang sah memiliki URL absolut
+      try {
+        const fullIframeSrc = new URL(src, baseUrl).href;
+        $(el).attr('src', fullIframeSrc);
+      } catch (e) {}
     }
   });
 
@@ -569,57 +600,71 @@ app.get('/api/proxy', async (req, res) => {
       });
     }
 
+    const isEmbedded = req.query.embed === '1' || req.query.videoboost === '1' || req.query.turbo === '1';
+
     // === Jika tetap diblokir, tampilkan halaman fallback cerdas ===
-    if ([401, 403, 407].includes(response.status)) {
-      return res.status(200).send(buildBlockedPage(targetUrl, `Situs memblokir proxy (HTTP ${response.status})`, response.status));
+    if ([401, 403, 407, 429].includes(response.status)) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+      res.removeHeader('Content-Security-Policy');
+      return res.status(200).send(buildBlockedPage(targetUrl, `Situs memblokir koneksi server (HTTP ${response.status})`, response.status, isEmbedded));
     }
 
     const contentType = response.headers['content-type'] || 'text/html';
 
     if (!contentType.includes('text/html')) {
       res.setHeader('Content-Type', contentType);
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
       return res.send(response.data);
     }
 
-    // === FULL LINK REWRITE ===
-    const $ = rewriteAllLinksToProxy(response.data, targetUrl);
+    // === FULL LINK REWRITE DENGAN EMBEDDED FLAG ===
+    const $ = rewriteAllLinksToProxy(response.data, targetUrl, isEmbedded);
 
-    const stealthBanner = `
-      <div id="shadowsearch-bar" style="
-        position:fixed;top:0;left:0;right:0;z-index:999999;
-        background:rgba(7,10,18,0.97);backdrop-filter:blur(12px);
-        color:#f8fafc;font-family:system-ui,sans-serif;
-        padding:8px 16px;display:flex;align-items:center;justify-content:space-between;
-        border-bottom:1px solid rgba(6,182,212,0.3);font-size:13px;
-        box-shadow:0 4px 20px rgba(0,0,0,0.7);flex-wrap:wrap;gap:8px;
-      ">
-        <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-          <span style="background:#10b981;color:#000;padding:2px 7px;border-radius:4px;font-weight:800;font-size:10px;white-space:nowrap;">🛡️ PROXIED</span>
-          <span style="color:#94a3b8;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">${new URL(targetUrl).hostname}</span>
+    if (!isEmbedded) {
+      const stealthBanner = `
+        <div id="shadowsearch-bar" style="
+          position:fixed;top:0;left:0;right:0;z-index:999999;
+          background:rgba(7,10,18,0.97);backdrop-filter:blur(12px);
+          color:#f8fafc;font-family:system-ui,sans-serif;
+          padding:8px 16px;display:flex;align-items:center;justify-content:space-between;
+          border-bottom:1px solid rgba(6,182,212,0.3);font-size:13px;
+          box-shadow:0 4px 20px rgba(0,0,0,0.7);flex-wrap:wrap;gap:8px;
+        ">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+            <span style="background:#10b981;color:#000;padding:2px 7px;border-radius:4px;font-weight:800;font-size:10px;white-space:nowrap;">🛡️ PROXIED</span>
+            <span style="color:#94a3b8;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">${new URL(targetUrl).hostname}</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button onclick="window.history.back()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">← Kembali</button>
+            <a href="/" style="background:#3b82f6;color:#fff;padding:5px 10px;border-radius:6px;text-decoration:none;font-size:12px;">🔍 Home</a>
+          </div>
         </div>
-        <div style="display:flex;gap:8px;flex-shrink:0;">
-          <button onclick="window.history.back()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">← Kembali</button>
-          <a href="/" style="background:#3b82f6;color:#fff;padding:5px 10px;border-radius:6px;text-decoration:none;font-size:12px;">🔍 Home</a>
-        </div>
-      </div>
-      <div style="height:44px;"></div>
-    `;
-    $('body').prepend(stealthBanner);
+        <div style="height:44px;"></div>
+      `;
+      $('body').prepend(stealthBanner);
+    }
     $('head').prepend(`<base href="${targetUrl}" />`);
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.removeHeader('Content-Security-Policy');
     res.send($.html());
 
   } catch (err) {
-    res.status(200).send(buildBlockedPage(targetUrl, err.message, 0));
+    const isEmbedded = req.query.embed === '1' || req.query.videoboost === '1' || req.query.turbo === '1';
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.removeHeader('Content-Security-Policy');
+    res.status(200).send(buildBlockedPage(targetUrl, err.message, 0, isEmbedded));
   }
 });
 
 // ============================================================
 // SMART FALLBACK PAGE — Tampil saat situs blokir proxy
 // ============================================================
-function buildBlockedPage(targetUrl, reason, statusCode) {
+function buildBlockedPage(targetUrl, reason, statusCode, isEmbedded = false) {
   const hostname = (() => { try { return new URL(targetUrl).hostname; } catch { return targetUrl; } })();
   const isCloudflare = reason.toLowerCase().includes('403') || reason.toLowerCase().includes('401') || reason.toLowerCase().includes('challenge');
 
@@ -628,44 +673,41 @@ function buildBlockedPage(targetUrl, reason, statusCode) {
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Tidak Bisa Diproxy — ShadowSearch</title>
+    <title>Situs Memblokir Proxy — ShadowSearch</title>
     <style>
       *{box-sizing:border-box;margin:0;padding:0}
-      body{background:#070a12;color:#f8fafc;font-family:system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;}
-      .icon{font-size:56px;margin-bottom:16px;}
-      h2{font-size:22px;margin-bottom:10px;color:#fbbf24;}
-      .desc{color:#94a3b8;font-size:14px;line-height:1.6;max-width:480px;margin-bottom:24px;}
-      .code{background:rgba(255,255,255,0.05);padding:8px 14px;border-radius:8px;font-family:monospace;font-size:12px;color:#64748b;margin-bottom:24px;word-break:break-all;}
-      .tip{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.25);border-radius:10px;padding:14px 18px;color:#fcd34d;font-size:13px;line-height:1.6;max-width:480px;margin-bottom:28px;text-align:left;}
-      .tip strong{display:block;margin-bottom:6px;font-size:14px;}
-      .actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}
-      .btn{padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;cursor:pointer;border:none;transition:all 0.2s;}
+      body{background:#070a12;color:#f8fafc;font-family:system-ui,-apple-system,sans-serif;min-height:${isEmbedded ? '360px' : '100vh'};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:${isEmbedded ? '16px' : '28px'};text-align:center;}
+      .icon{font-size:${isEmbedded ? '36px' : '52px'};margin-bottom:12px;}
+      h2{font-size:${isEmbedded ? '17px' : '22px'};margin-bottom:8px;color:#fbbf24;font-weight:700;}
+      .desc{color:#94a3b8;font-size:${isEmbedded ? '12px' : '14px'};line-height:1.5;max-width:440px;margin-bottom:14px;}
+      .code{background:rgba(255,255,255,0.06);padding:6px 12px;border-radius:6px;font-family:monospace;font-size:11px;color:#64748b;margin-bottom:16px;word-break:break-all;}
+      .tip{background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);border-radius:10px;padding:${isEmbedded ? '10px 14px' : '14px 18px'};color:#fcd34d;font-size:${isEmbedded ? '11px' : '13px'};line-height:1.5;max-width:440px;margin-bottom:20px;text-align:left;}
+      .tip strong{display:block;margin-bottom:4px;color:#fbbf24;}
+      .actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
+      .btn{padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;cursor:pointer;border:none;transition:all 0.2s;display:inline-flex;align-items:center;gap:6px;}
+      .btn-warning{background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:700;box-shadow:0 2px 10px rgba(245,158,11,0.3);}
+      .btn-warning:hover{filter:brightness(1.1);transform:translateY(-1px);}
+      .btn-back{background:rgba(255,255,255,0.08);color:#cbd5e1;border:1px solid rgba(255,255,255,0.12);}
+      .btn-back:hover{color:#fff;background:rgba(255,255,255,0.15);}
       .btn-primary{background:#3b82f6;color:#fff;}
       .btn-primary:hover{background:#2563eb;}
-      .btn-warning{background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.4);color:#fbbf24;}
-      .btn-warning:hover{background:rgba(251,191,36,0.3);}
-      .btn-back{background:rgba(255,255,255,0.07);color:#94a3b8;border:1px solid rgba(255,255,255,0.1);}
-      .btn-back:hover{color:#fff;}
     </style>
   </head>
   <body>
-    <div class="icon">🚧</div>
-    <h2>Situs Ini Memblokir Proxy</h2>
+    <div class="icon">🛡️</div>
+    <h2>Situs Dilindungi Cloudflare</h2>
     <p class="desc">
-      <strong>${hostname}</strong> menggunakan sistem keamanan (seperti Cloudflare) yang mendeteksi dan menolak koneksi dari server proxy.
+      <strong>${hostname}</strong> memblokir koneksi dari IP server datacenter.
     </p>
     <div class="code">${reason}</div>
-    ${isCloudflare ? `
     <div class="tip">
-      <strong>💡 Kenapa ini terjadi?</strong>
-      Situs seperti <em>anichin.moe</em>, Cloudflare-protected sites, atau situs streaming biasanya memblokir IP datacenter (server Render). Ini di luar kemampuan proxy standar.
-      <br><br>
-      <strong>✅ Solusi:</strong> Buka situs langsung di tab baru. Traffic Anda tetap terenkripsi HTTPS — pemilik WiFi hanya tahu Anda mengakses <em>${hostname}</em>, bukan halaman spesifik yang dibuka.
-    </div>` : ''}
+      <strong>✅ Solusi Cepat:</strong>
+      Gunakan tombol di bawah untuk membuka situs langsung di Tab Baru. Enkripsi HTTPS browser Anda tetap mengamankan data dari pemilik WiFi.
+    </div>
     <div class="actions">
-      <a href="${targetUrl}" target="_blank" rel="noopener" class="btn btn-warning">🔗 Buka Langsung (Tab Baru)</a>
-      <a href="javascript:history.back()" class="btn btn-back">← Kembali</a>
-      <a href="/" class="btn btn-primary">🔍 Kembali ke ShadowSearch</a>
+      <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-warning">↗ Buka Langsung (Tab Baru)</a>
+      <a href="javascript:location.reload()" class="btn btn-back">🔄 Coba Lagi</a>
+      ${!isEmbedded ? '<a href="/" class="btn btn-primary">🔍 ShadowSearch</a>' : ''}
     </div>
   </body>
   </html>`;
